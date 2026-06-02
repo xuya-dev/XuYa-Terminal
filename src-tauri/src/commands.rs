@@ -6,15 +6,11 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 use xuya_core::{PtyChunk, SessionSpec};
 use xuya_pty::PtySession;
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 /// Open a new PTY session. Returns the session ID.
 #[tauri::command]
@@ -252,14 +248,10 @@ fn latest_codex_session(
 }
 
 fn latest_opencode_session(
-    cwd: Option<&str>,
+    _cwd: Option<&str>,
     since: SystemTime,
     exclude_ids: &HashSet<String>,
 ) -> Result<Option<String>, String> {
-    if let Some(id) = latest_opencode_session_from_cli(cwd, since, exclude_ids)? {
-        return Ok(Some(id));
-    }
-
     let home = match home_dir() {
         Some(path) => path,
         None => return Ok(None),
@@ -290,116 +282,6 @@ fn latest_opencode_session(
     }
 
     Ok(best.map(|(_, id)| id))
-}
-
-fn latest_opencode_session_from_cli(
-    cwd: Option<&str>,
-    since: SystemTime,
-    exclude_ids: &HashSet<String>,
-) -> Result<Option<String>, String> {
-    let mut cmd = opencode_command();
-    cmd.arg("session")
-        .arg("list")
-        .arg("--format")
-        .arg("json")
-        .arg("--max-count")
-        .arg("20");
-    if let Some(cwd) = cwd {
-        cmd.current_dir(cwd);
-    }
-
-    let output = match cmd.output() {
-        Ok(output) => output,
-        Err(_) => return Ok(None),
-    };
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let text = stdout.trim();
-    if text.is_empty() {
-        return Ok(None);
-    }
-    let parsed: Value = serde_json::from_str(text)
-        .map_err(|e| format!("Failed to parse opencode sessions: {e}"))?;
-    let sessions = match parsed.as_array() {
-        Some(items) => items,
-        None => return Ok(None),
-    };
-
-    let mut best: Option<(SystemTime, String)> = None;
-    for item in sessions {
-        let Some(updated) = json_time(item).filter(|time| *time >= since) else {
-            continue;
-        };
-        let Some(session_id) = item
-            .get("id")
-            .or_else(|| item.get("sessionID"))
-            .or_else(|| item.get("sessionId"))
-            .and_then(Value::as_str)
-        else {
-            continue;
-        };
-        if exclude_ids.contains(session_id) {
-            continue;
-        }
-        if best.as_ref().map_or(true, |(time, _)| updated > *time) {
-            best = Some((updated, session_id.to_string()));
-        }
-    }
-
-    Ok(best.map(|(_, id)| id))
-}
-
-fn opencode_command() -> Command {
-    let executable = resolve_opencode_executable().unwrap_or_else(|| PathBuf::from("opencode"));
-    let mut cmd = Command::new(executable);
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
-}
-
-#[cfg(windows)]
-fn resolve_opencode_executable() -> Option<PathBuf> {
-    first_path_from_where("opencode.exe")
-        .or_else(|| first_path_from_where("opencode.cmd").and_then(resolve_opencode_cmd_target))
-        .or_else(|| first_path_from_where("opencode.cmd"))
-}
-
-#[cfg(not(windows))]
-fn resolve_opencode_executable() -> Option<PathBuf> {
-    None
-}
-
-#[cfg(windows)]
-fn first_path_from_where(command: &str) -> Option<PathBuf> {
-    let output = Command::new("where.exe").arg(command).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(PathBuf::from)
-        .find(|path| path.exists())
-}
-
-#[cfg(windows)]
-fn resolve_opencode_cmd_target(cmd_path: PathBuf) -> Option<PathBuf> {
-    let bin_dir = cmd_path.parent()?;
-    let exe = bin_dir
-        .join("node_modules")
-        .join("opencode-ai")
-        .join("bin")
-        .join("opencode.exe");
-
-    exe.is_file().then_some(exe)
 }
 
 fn collect_files(root: &Path, extension: &str) -> Result<Vec<PathBuf>, String> {
@@ -455,72 +337,6 @@ fn home_dir() -> Option<PathBuf> {
 
 fn system_time_from_millis(ms: u64) -> Option<SystemTime> {
     UNIX_EPOCH.checked_add(Duration::from_millis(ms))
-}
-
-fn json_time(value: &Value) -> Option<SystemTime> {
-    [
-        value.get("updated"),
-        value.get("updatedAt"),
-        value.get("time").and_then(|time| time.get("updated")),
-        value.get("time").and_then(|time| time.get("updatedAt")),
-        value.get("created"),
-        value.get("createdAt"),
-    ]
-    .into_iter()
-    .flatten()
-    .find_map(value_to_system_time)
-}
-
-fn value_to_system_time(value: &Value) -> Option<SystemTime> {
-    if let Some(ms) = value.as_u64() {
-        return system_time_from_millis(ms);
-    }
-
-    let text = value.as_str()?;
-    parse_simple_rfc3339(text)
-}
-
-fn parse_simple_rfc3339(value: &str) -> Option<SystemTime> {
-    let value = value.strip_suffix('Z').unwrap_or(value);
-    let (date, time) = value.split_once('T')?;
-    let mut date_parts = date.split('-');
-    let year = date_parts.next()?.parse::<i32>().ok()?;
-    let month = date_parts.next()?.parse::<u32>().ok()?;
-    let day = date_parts.next()?.parse::<u32>().ok()?;
-
-    let mut time_parts = time.split(':');
-    let hour = time_parts.next()?.parse::<u32>().ok()?;
-    let minute = time_parts.next()?.parse::<u32>().ok()?;
-    let second_text = time_parts.next()?.split('.').next()?;
-    let second = second_text.parse::<u32>().ok()?;
-
-    let days = days_from_civil(year, month, day)?;
-    let seconds = days
-        .checked_mul(86_400)?
-        .checked_add((hour as i64).checked_mul(3_600)?)?
-        .checked_add((minute as i64).checked_mul(60)?)?
-        .checked_add(second as i64)?;
-
-    if seconds < 0 {
-        return None;
-    }
-
-    UNIX_EPOCH.checked_add(Duration::from_secs(seconds as u64))
-}
-
-fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-
-    let year = year - i32::from(month <= 2);
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe = year - era * 400;
-    let month = month as i32;
-    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day as i32 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-
-    Some((era * 146_097 + doe - 719_468) as i64)
 }
 
 fn normalize_path_text(path: &str) -> String {

@@ -307,6 +307,7 @@ export default function TerminalView(
       }
 
       const openPty = async () => {
+        const commandStartedAt = Date.now();
         unlisten = await listen<{
           type: string;
           data?: number[];
@@ -342,7 +343,7 @@ export default function TerminalView(
               cwd: cwd ?? null,
               rows: term.rows,
               cols: term.cols,
-              startupCommand: null,
+              startupCommand: startup.command ?? null,
             },
           });
         } catch (err) {
@@ -353,22 +354,6 @@ export default function TerminalView(
         if (disposed) {
           invoke("pty_close", { id }).catch(() => {});
           return undefined;
-        }
-
-        const commandStartedAt = Date.now();
-        if (startup.command) {
-          await delay(500);
-          if (disposed) return undefined;
-          await invoke("pty_write", {
-            id,
-            data: Array.from(
-              new TextEncoder().encode(`${startup.command}\r\n`),
-            ),
-          }).catch((err) => {
-            if (!disposed) {
-              term.writeln(`\x1b[31m[Agent Error] ${String(err)}\x1b[0m`);
-            }
-          });
         }
 
         return commandStartedAt;
@@ -721,30 +706,40 @@ function getAgentStartupCommand(
   agentSessionId: string | undefined,
 ): string | undefined {
   if (!cmd) return undefined;
+  const executable = agentExecutable(cmd);
+
   if (!resumeOnRestore) {
     if (cmd === "claude" && agentSessionId) {
-      return `claude --session-id ${quoteArg(agentSessionId)}`;
+      return `${executable} --session-id ${quoteArg(agentSessionId)}`;
     }
-    return cmd;
+    return executable;
   }
 
   if (agentSessionId) {
     return (
       {
-        claude: `claude --resume ${quoteArg(agentSessionId)}`,
-        codex: `codex resume ${quoteArg(agentSessionId)}`,
-        opencode: `opencode -s ${quoteArg(agentSessionId)}`,
-      }[cmd] ?? `${cmd} --resume ${quoteArg(agentSessionId)}`
+        claude: `${executable} --resume ${quoteArg(agentSessionId)}`,
+        codex: `${executable} resume ${quoteArg(agentSessionId)}`,
+        opencode: `${executable} -s ${quoteArg(agentSessionId)}`,
+      }[cmd] ?? `${executable} --resume ${quoteArg(agentSessionId)}`
     );
   }
 
-  if (cmd === "opencode") return "opencode";
-  if (cmd === "codex") return "codex";
+  if (cmd === "opencode" || cmd === "codex") return executable;
 
   return (
     {
-      claude: "claude --continue",
-    }[cmd] ?? `${cmd} --resume`
+      claude: `${executable} --continue`,
+    }[cmd] ?? `${executable} --resume`
+  );
+}
+
+function agentExecutable(cmd: string): string {
+  return (
+    {
+      codex: "codex.cmd",
+      opencode: "opencode.cmd",
+    }[cmd] ?? cmd
   );
 }
 
@@ -759,12 +754,6 @@ function queueAgentSessionLookup<T>(task: () => Promise<T>): Promise<T> {
     () => undefined,
   );
   return next;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function createPtyId(): string {

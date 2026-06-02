@@ -25,6 +25,8 @@ pub fn resolve_command(kind: &ShellKind, startup_command: Option<&str>) -> Resul
             let mut cmd = CommandBuilder::new(exe);
             cmd.arg("-NoLogo");
             if let Some(command) = startup_command {
+                cmd.arg("-ExecutionPolicy");
+                cmd.arg("Bypass");
                 cmd.arg("-NoExit");
                 cmd.arg("-Command");
                 cmd.arg(delayed_powershell_command(command));
@@ -47,6 +49,8 @@ pub fn resolve_command(kind: &ShellKind, startup_command: Option<&str>) -> Resul
             let mut cmd = CommandBuilder::new(exe);
             cmd.arg("-NoLogo");
             if let Some(command) = startup_command {
+                cmd.arg("-ExecutionPolicy");
+                cmd.arg("Bypass");
                 cmd.arg("-NoExit");
                 cmd.arg("-Command");
                 cmd.arg(delayed_powershell_command(command));
@@ -103,7 +107,7 @@ pub fn resolve_command(kind: &ShellKind, startup_command: Option<&str>) -> Resul
 }
 
 fn delayed_powershell_command(command: &str) -> String {
-    format!("Start-Sleep -Milliseconds 700; {command}")
+    format!("Start-Sleep -Milliseconds 500; & {command}")
 }
 
 /// Human-readable name for a shell kind.
