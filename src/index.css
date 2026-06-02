@@ -1299,6 +1299,7 @@ body,
 /* ── Terminal container ─────────────────────────────────────────────────── */
 
 .xy-terminal-container {
+  position: relative;
   width: 100%;
   height: 100%;
   background: var(--xy-terminal-bg, var(--xy-surface-panel));
@@ -1306,9 +1307,76 @@ body,
   padding: 8px 10px 4px;
 }
 
+.xy-terminal-host {
+  width: 100%;
+  height: 100%;
+}
+
 .xterm {
   padding: 0;
   height: 100%;
+}
+
+.xy-agent-launch {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  max-width: min(360px, calc(100% - 24px));
+  min-height: 30px;
+  gap: 9px;
+  padding: 7px 10px;
+  color: var(--xy-fg);
+  font-size: 12px;
+  line-height: 1.2;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--xy-surface) 92%, transparent),
+      color-mix(in srgb, var(--xy-surface-panel) 95%, transparent)
+    );
+  border: 1px solid color-mix(in srgb, var(--xy-border) 80%, transparent);
+  border-radius: 7px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.xy-agent-launch__spinner {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in srgb, var(--xy-accent) 22%, transparent);
+  border-top-color: var(--xy-accent);
+  border-radius: 50%;
+  animation: xy-agent-spin 0.85s linear infinite;
+}
+
+.xy-agent-launch--failed {
+  color: var(--xy-danger);
+  border-color: color-mix(in srgb, var(--xy-danger) 45%, var(--xy-border));
+}
+
+.xy-agent-launch__mark {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--xy-surface);
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--xy-danger);
+  border-radius: 50%;
+}
+
+@keyframes xy-agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .xterm-viewport {

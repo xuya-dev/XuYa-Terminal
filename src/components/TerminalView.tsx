@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { useThemeStore } from "../stores/themeStore";
 import { useSettingsStore, zoomToFontSize } from "../stores/settingsStore";
@@ -27,6 +27,8 @@ interface TerminalViewParams {
   /** Pre-set label (used by sidebar / status bar). */
   label?: string;
 }
+
+type AgentLaunchState = "idle" | "starting" | "ready" | "failed";
 
 /**
  * Registry of mounted terminals keyed by Dockview panel id. Lets the
@@ -59,6 +61,7 @@ export default function TerminalView(
   props: IDockviewPanelProps<TerminalViewParams>,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const terminalHostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -74,6 +77,11 @@ export default function TerminalView(
     (agentCommand
       ? agentLabel(agentCommand)
       : shellLabelFor(shellKind));
+  const [agentLaunchState, setAgentLaunchState] =
+    useState<AgentLaunchState>(agentCommand ? "starting" : "idle");
+  const [agentLaunchMessage, setAgentLaunchMessage] = useState(
+    agentCommand ? `正在启动 ${label}` : "",
+  );
 
   const palette = useThemeStore((s) => s.palette);
   const zoom = useSettingsStore((s) => s.zoom);
@@ -87,7 +95,7 @@ export default function TerminalView(
   // Mount xterm + spawn PTY once. Settings are read from the store at
   // mount; live changes are applied by the effects further down.
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !terminalHostRef.current) return;
 
     const { zoom, cursorStyle, cursorBlink } = useSettingsStore.getState();
 
@@ -145,8 +153,13 @@ export default function TerminalView(
     let unlisten: (() => void) | null = null;
     let sessionLookupTimer: ReturnType<typeof setTimeout> | null = null;
     let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
+    let agentReadyTimer: ReturnType<typeof setTimeout> | null = null;
+    let agentSlowTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
     let isOpen = false;
+    let agentLaunchSettled = !props.params?.agentCommand;
+    let agentStartupOutput = "";
+    const agentOutputDecoder = new TextDecoder();
     let openObserver: ResizeObserver | null = null;
     let openTimer: ReturnType<typeof setTimeout> | null = null;
     const openWaiters: Array<() => void> = [];
@@ -167,7 +180,7 @@ export default function TerminalView(
       const fitted = fitTerminal(
         term,
         fitAddon,
-        containerRef.current,
+        terminalHostRef.current,
         isOpen && !disposed,
       );
       if (!fitted || !resizePty) return fitted;
@@ -183,9 +196,39 @@ export default function TerminalView(
       return true;
     };
 
+    const markAgentReady = (): void => {
+      if (disposed || agentLaunchSettled) return;
+      agentLaunchSettled = true;
+      if (agentReadyTimer) clearTimeout(agentReadyTimer);
+      if (agentSlowTimer) clearTimeout(agentSlowTimer);
+      setAgentLaunchState("ready");
+      setAgentLaunchMessage("");
+    };
+
+    const markAgentFailed = (message: string): void => {
+      if (disposed || agentLaunchSettled) return;
+      agentLaunchSettled = true;
+      if (agentReadyTimer) clearTimeout(agentReadyTimer);
+      if (agentSlowTimer) clearTimeout(agentSlowTimer);
+      setAgentLaunchState("failed");
+      setAgentLaunchMessage(message);
+    };
+
+    const scheduleAgentReady = (): void => {
+      if (agentLaunchSettled || agentReadyTimer) return;
+      agentReadyTimer = setTimeout(() => {
+        agentReadyTimer = null;
+        if (hasAgentStartupError(agentStartupOutput)) {
+          markAgentFailed(`${label} 启动失败`);
+          return;
+        }
+        markAgentReady();
+      }, 1500);
+    };
+
     const tryOpenTerminal = (): void => {
       if (disposed || isOpen) return;
-      const el = containerRef.current;
+      const el = terminalHostRef.current;
       if (!hasRenderableSize(el)) return;
 
       try {
@@ -207,9 +250,16 @@ export default function TerminalView(
         safeFit(true);
       }
     });
-    openObserver.observe(containerRef.current);
+    openObserver.observe(terminalHostRef.current);
     tryOpenTerminal();
     openTimer = setTimeout(tryOpenTerminal, 100);
+    if (props.params?.agentCommand) {
+      agentSlowTimer = setTimeout(() => {
+        if (!disposed && !agentLaunchSettled) {
+          setAgentLaunchMessage(`${label} 启动时间较长，仍在等待输出`);
+        }
+      }, 12000);
+    }
 
     const lookupAgentSession = async (
       agentCmd: string,
@@ -302,6 +352,7 @@ export default function TerminalView(
       rememberPanelAgentSession(startup.agentSessionId, !isExistingBinding);
 
       if (startup.error) {
+        markAgentFailed(startup.error);
         term.writeln(`\x1b[31m[Agent Error] ${startup.error}\x1b[0m`);
         return;
       }
@@ -316,7 +367,17 @@ export default function TerminalView(
           if (disposed) return;
           const p = event.payload;
           if (p.type === "Data" && p.data) {
-            term.write(new Uint8Array(p.data));
+            const bytes = new Uint8Array(p.data);
+            if (!agentLaunchSettled) {
+              agentStartupOutput = (
+                agentStartupOutput + agentOutputDecoder.decode(bytes, { stream: true })
+              ).slice(-4000);
+              if (hasAgentStartupError(agentStartupOutput)) {
+                markAgentFailed(`${label} 启动失败`);
+              }
+              scheduleAgentReady();
+            }
+            term.write(bytes);
           } else if (p.type === "Exit") {
             term.writeln(
               `\r\n\x1b[90m[Process exited${
@@ -327,6 +388,9 @@ export default function TerminalView(
               status: "exited",
               exitCode: p.code ?? undefined,
             });
+            if (!agentLaunchSettled) {
+              markAgentFailed(`${label} 启动失败`);
+            }
           }
         });
         if (disposed) {
@@ -348,6 +412,7 @@ export default function TerminalView(
           });
         } catch (err) {
           if (disposed) return undefined;
+          markAgentFailed(`${label} 启动失败`);
           term.writeln(`\x1b[31m[PTY Error] ${err}\x1b[0m`);
           return undefined;
         }
@@ -382,7 +447,9 @@ export default function TerminalView(
       });
 
       if (agentCmdToBind && !sessionLookupTimer) {
-        scheduleAgentSessionLookup(agentCmdToBind, commandStartedAt);
+        scheduleAgentSessionLookup(agentCmdToBind, commandStartedAt, 0, () => {
+          markAgentReady();
+        });
       }
 
       // Wire keyboard input.
@@ -400,6 +467,8 @@ export default function TerminalView(
       disposed = true;
       terminalOpenRef.current = false;
       if (openTimer) clearTimeout(openTimer);
+      if (agentReadyTimer) clearTimeout(agentReadyTimer);
+      if (agentSlowTimer) clearTimeout(agentSlowTimer);
       openObserver?.disconnect();
       resolveOpenWaiters();
       if (sessionLookupTimer) clearTimeout(sessionLookupTimer);
@@ -432,7 +501,7 @@ export default function TerminalView(
     const fitted = fitTerminal(
       term,
       fit,
-      containerRef.current,
+      terminalHostRef.current,
       terminalOpenRef.current,
     );
     if (!fitted) return;
@@ -471,7 +540,7 @@ export default function TerminalView(
     const fitted = fitTerminal(
       term,
       fit,
-      containerRef.current,
+      terminalHostRef.current,
       terminalOpenRef.current,
     );
     if (!term || !fitted) return;
@@ -589,7 +658,24 @@ export default function TerminalView(
         if (terminalOpenRef.current) termRef.current?.focus();
       }}
       onWheel={handleWheel}
-    />
+    >
+      <div ref={terminalHostRef} className="xy-terminal-host" />
+      {agentLaunchState === "starting" && (
+        <div className="xy-agent-launch" aria-live="polite">
+          <span className="xy-agent-launch__spinner" />
+          <span>{agentLaunchMessage}</span>
+        </div>
+      )}
+      {agentLaunchState === "failed" && (
+        <div
+          className="xy-agent-launch xy-agent-launch--failed"
+          aria-live="assertive"
+        >
+          <span className="xy-agent-launch__mark">!</span>
+          <span>{agentLaunchMessage}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -613,6 +699,25 @@ function fitTerminal(
   } catch {
     return false;
   }
+}
+
+function hasAgentStartupError(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return [
+    "not recognized as",
+    "is not recognized",
+    "commandnotfoundexception",
+    "running scripts is disabled",
+    "cannot be loaded because running scripts is disabled",
+    "command not found",
+    "no such file or directory",
+    "error: unknown option",
+    "error: unexpected argument",
+    "无法将",
+    "无法加载文件",
+    "未被识别",
+    "不是内部或外部命令",
+  ].some((pattern) => normalized.includes(pattern.toLowerCase()));
 }
 
 function getClipboardFiles(data: DataTransfer | null): File[] {
