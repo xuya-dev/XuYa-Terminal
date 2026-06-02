@@ -3,13 +3,15 @@ import {
   DockviewReadyEvent,
   DockviewApi,
   IDockviewPanelProps,
+  type GetTabContextMenuItemsParams,
+  type ReactContextMenuItemConfig,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import { useEffect, useState, useCallback } from "react";
 import TerminalView from "./TerminalView";
 import PanelTab from "./PanelTab";
 import Watermark from "./Watermark";
-import { LeftHeaderActions, RightHeaderActions } from "./HeaderActions";
+import { RightHeaderActions } from "./HeaderActions";
 import { openTerminal } from "../lib/panels";
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
@@ -21,6 +23,59 @@ const tabComponents = {
 };
 
 const LAYOUT_KEY = "xuya-layout";
+
+function closeTabs(
+  params: GetTabContextMenuItemsParams,
+  mode: "left" | "right" | "others" | "all",
+) {
+  const panels = [...params.group.panels];
+  const currentIndex = panels.findIndex((p) => p.id === params.panel.id);
+  if (currentIndex === -1) return;
+
+  const targets = panels.filter((p, index) => {
+    const shouldClose =
+      mode === "all" ||
+      (mode === "left" && index < currentIndex) ||
+      (mode === "right" && index > currentIndex) ||
+      (mode === "others" && p.id !== params.panel.id);
+
+    return shouldClose;
+  });
+
+  targets.forEach((p) => p.api.close());
+}
+
+function getTabContextMenuItems(
+  params: GetTabContextMenuItemsParams,
+): ReactContextMenuItemConfig[] {
+  const panels = [...params.group.panels];
+  const currentIndex = panels.findIndex((p) => p.id === params.panel.id);
+  const hasLeft = currentIndex > 0;
+  const hasRight = currentIndex >= 0 && currentIndex < panels.length - 1;
+  const hasOthers = panels.length > 1;
+
+  return [
+    {
+      label: "关闭左侧标签",
+      disabled: !hasLeft,
+      action: () => closeTabs(params, "left"),
+    },
+    {
+      label: "关闭右侧标签",
+      disabled: !hasRight,
+      action: () => closeTabs(params, "right"),
+    },
+    {
+      label: "关闭其他标签",
+      disabled: !hasOthers,
+      action: () => closeTabs(params, "others"),
+    },
+    {
+      label: "关闭全部标签",
+      action: () => closeTabs(params, "all"),
+    },
+  ];
+}
 
 interface Props {
   onApiReady: (api: DockviewApi) => void;
@@ -81,8 +136,9 @@ export default function DockviewLayout({ onApiReady }: Props) {
         components={components}
         tabComponents={tabComponents}
         watermarkComponent={Watermark}
-        leftHeaderActionsComponent={LeftHeaderActions}
         rightHeaderActionsComponent={RightHeaderActions}
+        disableTabsOverflowList
+        getTabContextMenuItems={getTabContextMenuItems}
       />
     </div>
   );
