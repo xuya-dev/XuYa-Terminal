@@ -38,7 +38,6 @@ const ALT_V = [27, 118];
 const CTRL_V = [22];
 const LAYOUT_KEY = "xuya-layout";
 let agentSessionLookupQueue: Promise<void> = Promise.resolve();
-let newAgentStartupQueue: Promise<void> = Promise.resolve();
 
 export function clearTerminal(panelId: string): void {
   REGISTRY.get(panelId)?.clear();
@@ -308,7 +307,6 @@ export default function TerminalView(
       }
 
       const openPty = async () => {
-        const commandStartedAt = Date.now();
         unlisten = await listen<{
           type: string;
           data?: number[];
@@ -344,7 +342,7 @@ export default function TerminalView(
               cwd: cwd ?? null,
               rows: term.rows,
               cols: term.cols,
-              startupCommand: startup.command ?? null,
+              startupCommand: null,
             },
           });
         } catch (err) {
@@ -357,33 +355,28 @@ export default function TerminalView(
           return undefined;
         }
 
+        const commandStartedAt = Date.now();
+        if (startup.command) {
+          await delay(500);
+          if (disposed) return undefined;
+          await invoke("pty_write", {
+            id,
+            data: Array.from(
+              new TextEncoder().encode(`${startup.command}\r\n`),
+            ),
+          }).catch((err) => {
+            if (!disposed) {
+              term.writeln(`\x1b[31m[Agent Error] ${String(err)}\x1b[0m`);
+            }
+          });
+        }
+
         return commandStartedAt;
       };
 
       const agentCmdToBind =
         agentCmd && !resolvedAgentSessionId ? agentCmd : undefined;
-      const commandStartedAt = agentCmdToBind
-        ? await queueNewAgentStartup(async () => {
-            const startedAt = await openPty();
-            if (!startedAt || disposed) return startedAt;
-
-            return new Promise<number | undefined>((resolve) => {
-              let resolved = false;
-              let timeout: ReturnType<typeof setTimeout> | null = null;
-              const done = (value: number | undefined) => {
-                if (resolved) return;
-                resolved = true;
-                if (timeout) clearTimeout(timeout);
-                resolve(value);
-              };
-
-              timeout = setTimeout(() => done(startedAt), 9000);
-              scheduleAgentSessionLookup(agentCmdToBind, startedAt, 0, () => {
-                done(startedAt);
-              });
-            });
-          })
-        : await openPty();
+      const commandStartedAt = await openPty();
 
       if (!commandStartedAt || disposed || !id) return;
 
@@ -768,13 +761,10 @@ function queueAgentSessionLookup<T>(task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-function queueNewAgentStartup<T>(task: () => Promise<T>): Promise<T> {
-  const next = newAgentStartupQueue.then(task, task);
-  newAgentStartupQueue = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function createPtyId(): string {
