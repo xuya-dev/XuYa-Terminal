@@ -1037,8 +1037,9 @@ body,
 
   --dv-icon-hover-background-color: var(--xy-surface-hover);
   --dv-floating-box-shadow: var(--xy-shadow);
-  --dv-drag-over-background-color: rgba(124, 58, 237, 0.18);
-  --dv-drag-over-border-color: var(--xy-accent);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--xy-accent) 22%, transparent);
+  --dv-drag-over-border-color: color-mix(in srgb, var(--xy-accent) 92%, white 8%);
+  --dv-drag-over-border: 1px solid color-mix(in srgb, var(--xy-accent) 84%, white 16%);
   --dv-tab-close-icon-color: var(--xy-fg-muted);
 }
 
@@ -1106,6 +1107,13 @@ body,
   min-width: 68px;
   max-width: 180px;
   overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.dockview-theme-xuya .dv-tab:active {
+  cursor: grabbing;
 }
 
 .dockview-theme-xuya .dv-tab.dv-active-tab {
@@ -1138,6 +1146,84 @@ body,
 .dockview-theme-xuya .dv-tab:hover:not(.dv-active-tab) {
   background: color-mix(in srgb, var(--xy-surface-hover) 86%, var(--xy-accent-soft) 14%);
   color: var(--xy-fg);
+}
+
+.dockview-theme-xuya .dv-tab.dv-tab--dragging {
+  opacity: 0.42;
+  transform: scale(0.985);
+}
+
+.dv-dragged.dv-tab,
+.dv-tab-ghost-drag {
+  border-radius: 7px !important;
+  background: color-mix(in srgb, var(--xy-surface-panel) 86%, var(--xy-accent-soft) 14%) !important;
+  border: 1px solid color-mix(in srgb, var(--xy-accent) 64%, var(--xy-border) 36%) !important;
+  color: var(--xy-fg) !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34) !important;
+  opacity: 0.94 !important;
+}
+
+.dv-drop-target-container .dv-drop-target-anchor,
+.dockview-theme-xuya
+  .dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection {
+  border-radius: 7px;
+  outline: 1px solid color-mix(in srgb, var(--xy-accent) 88%, white 12%);
+  outline-offset: -1px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--xy-accent) 34%, transparent),
+    inset 0 0 22px color-mix(in srgb, var(--xy-accent) 10%, transparent);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+}
+
+.dv-drop-target-container
+  .dv-drop-target-anchor.dv-drop-target-right,
+.dockview-theme-xuya
+  .dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection.dv-drop-target-right {
+  box-shadow:
+    inset -3px 0 0 var(--xy-accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--xy-accent) 34%, transparent),
+    inset 0 0 22px color-mix(in srgb, var(--xy-accent) 10%, transparent);
+}
+
+.dv-drop-target-container
+  .dv-drop-target-anchor.dv-drop-target-left,
+.dockview-theme-xuya
+  .dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection.dv-drop-target-left {
+  box-shadow:
+    inset 3px 0 0 var(--xy-accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--xy-accent) 34%, transparent),
+    inset 0 0 22px color-mix(in srgb, var(--xy-accent) 10%, transparent);
+}
+
+.dv-drop-target-container
+  .dv-drop-target-anchor.dv-drop-target-bottom,
+.dockview-theme-xuya
+  .dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection.dv-drop-target-bottom {
+  box-shadow:
+    inset 0 -3px 0 var(--xy-accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--xy-accent) 34%, transparent),
+    inset 0 0 22px color-mix(in srgb, var(--xy-accent) 10%, transparent);
+}
+
+.dv-drop-target-container
+  .dv-drop-target-anchor.dv-drop-target-top,
+.dockview-theme-xuya
+  .dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection.dv-drop-target-top {
+  box-shadow:
+    inset 0 3px 0 var(--xy-accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--xy-accent) 34%, transparent),
+    inset 0 0 22px color-mix(in srgb, var(--xy-accent) 10%, transparent);
 }
 
 .dockview-theme-xuya .dv-default-tab {

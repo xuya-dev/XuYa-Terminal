@@ -138,6 +138,7 @@ export default function DockviewLayout({ onApiReady }: Props) {
         watermarkComponent={Watermark}
         rightHeaderActionsComponent={RightHeaderActions}
         disableTabsOverflowList
+        dndStrategy="pointer"
         getTabContextMenuItems={getTabContextMenuItems}
       />
     </div>
