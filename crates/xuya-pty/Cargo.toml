@@ -1,0 +1,12 @@
+[package]
+name = "xuya-pty"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+xuya-core = { path = "../xuya-core" }
+portable-pty = "0.9"
+tokio = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+log = "0.4"

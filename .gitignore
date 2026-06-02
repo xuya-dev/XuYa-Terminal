@@ -1,0 +1,36 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Node / Dependency Directories
+node_modules
+dist
+dist-ssr
+*.local
+
+# Rust / Tauri Build Directories
+target/
+src-tauri/target/
+src-tauri/gen/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDEs and Editors
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.claude/
+.nezha/
+.gemini/
+antigravity/
