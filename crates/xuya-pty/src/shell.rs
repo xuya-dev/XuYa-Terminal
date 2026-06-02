@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use xuya_core::ShellKind;
 
 /// Resolve a [`ShellKind`] into a [`CommandBuilder`] ready to spawn.
-pub fn resolve_command(kind: &ShellKind) -> Result<CommandBuilder> {
+pub fn resolve_command(kind: &ShellKind, startup_command: Option<&str>) -> Result<CommandBuilder> {
     match kind {
         ShellKind::Pwsh => {
             let exe = find_executable("pwsh.exe")
@@ -24,6 +24,11 @@ pub fn resolve_command(kind: &ShellKind) -> Result<CommandBuilder> {
                 .context("PowerShell 7 (pwsh) not found")?;
             let mut cmd = CommandBuilder::new(exe);
             cmd.arg("-NoLogo");
+            if let Some(command) = startup_command {
+                cmd.arg("-NoExit");
+                cmd.arg("-Command");
+                cmd.arg(delayed_powershell_command(command));
+            }
             Ok(cmd)
         }
         ShellKind::PowerShell => {
@@ -41,11 +46,21 @@ pub fn resolve_command(kind: &ShellKind) -> Result<CommandBuilder> {
                 .context("Windows PowerShell not found")?;
             let mut cmd = CommandBuilder::new(exe);
             cmd.arg("-NoLogo");
+            if let Some(command) = startup_command {
+                cmd.arg("-NoExit");
+                cmd.arg("-Command");
+                cmd.arg(delayed_powershell_command(command));
+            }
             Ok(cmd)
         }
         ShellKind::Cmd => {
             let exe = find_executable("cmd.exe").context("cmd.exe not found")?;
-            Ok(CommandBuilder::new(exe))
+            let mut cmd = CommandBuilder::new(exe);
+            if let Some(command) = startup_command {
+                cmd.arg("/K");
+                cmd.arg(format!("timeout /t 1 /nobreak >nul & {command}"));
+            }
+            Ok(cmd)
         }
         ShellKind::Wsl => {
             let exe =
@@ -53,6 +68,12 @@ pub fn resolve_command(kind: &ShellKind) -> Result<CommandBuilder> {
             let mut cmd = CommandBuilder::new(exe);
             cmd.arg("-d");
             cmd.arg("Ubuntu");
+            if let Some(command) = startup_command {
+                cmd.arg("--exec");
+                cmd.arg("sh");
+                cmd.arg("-lc");
+                cmd.arg(format!("sleep 1; {command}; exec sh"));
+            }
             Ok(cmd)
         }
         ShellKind::GitBash => {
@@ -72,9 +93,17 @@ pub fn resolve_command(kind: &ShellKind) -> Result<CommandBuilder> {
             let mut cmd = CommandBuilder::new(exe);
             cmd.arg("--login");
             cmd.arg("-i");
+            if let Some(command) = startup_command {
+                cmd.arg("-c");
+                cmd.arg(format!("sleep 1; {command}; exec bash --login -i"));
+            }
             Ok(cmd)
         }
     }
+}
+
+fn delayed_powershell_command(command: &str) -> String {
+    format!("Start-Sleep -Milliseconds 700; {command}")
 }
 
 /// Human-readable name for a shell kind.

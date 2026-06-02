@@ -19,6 +19,8 @@ pub enum PtyChunk {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSpec {
+    /// Optional frontend-provided session id used for event subscription.
+    pub id: Option<String>,
     /// Which shell to launch.
     pub shell_kind: ShellKind,
     /// Working directory for the new shell. `None` = inherit current.
@@ -27,6 +29,8 @@ pub struct SessionSpec {
     pub rows: u16,
     /// Initial terminal columns.
     pub cols: u16,
+    /// Optional command to run after the shell has started.
+    pub startup_command: Option<String>,
 }
 
 /// Supported shell types on Windows.

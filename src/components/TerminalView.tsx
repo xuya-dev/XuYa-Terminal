@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { useEffect, useRef, useCallback } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
@@ -39,7 +38,7 @@ const ALT_V = [27, 118];
 const CTRL_V = [22];
 const LAYOUT_KEY = "xuya-layout";
 let agentSessionLookupQueue: Promise<void> = Promise.resolve();
-let agentStartupQueue: Promise<void> = Promise.resolve();
+let newAgentStartupQueue: Promise<void> = Promise.resolve();
 
 export function clearTerminal(panelId: string): void {
   REGISTRY.get(panelId)?.clear();
@@ -65,6 +64,7 @@ export default function TerminalView(
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const agentCommandRef = useRef<string | undefined>(props.params?.agentCommand);
+  const terminalOpenRef = useRef(false);
 
   const shellKind = (props.params?.shellKind ?? "powerShell") as ShellKind;
   const cwd = props.params?.cwd;
@@ -137,25 +137,6 @@ export default function TerminalView(
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
-
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => webglAddon.dispose());
-      term.loadAddon(webglAddon);
-    } catch {
-      // Canvas fallback is automatic.
-    }
-
-    term.open(containerRef.current);
-    if (containerRef.current.clientWidth > 0 && containerRef.current.clientHeight > 0) {
-      fitAddon.fit();
-    }
-    const fitTimer = setTimeout(() => {
-      if (containerRef.current && containerRef.current.clientWidth > 0 && containerRef.current.clientHeight > 0) {
-        fitAddon.fit();
-      }
-    }, 100);
-
     termRef.current = term;
     fitAddonRef.current = fitAddon;
     REGISTRY.set(props.api.id, term);
@@ -166,6 +147,70 @@ export default function TerminalView(
     let sessionLookupTimer: ReturnType<typeof setTimeout> | null = null;
     let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
+    let isOpen = false;
+    let openObserver: ResizeObserver | null = null;
+    let openTimer: ReturnType<typeof setTimeout> | null = null;
+    const openWaiters: Array<() => void> = [];
+    const ptyId = createPtyId();
+
+    const resolveOpenWaiters = (): void => {
+      while (openWaiters.length > 0) {
+        openWaiters.shift()?.();
+      }
+    };
+
+    const waitForTerminalOpen = (): Promise<void> => {
+      if (isOpen) return Promise.resolve();
+      return new Promise((resolve) => openWaiters.push(resolve));
+    };
+
+    const safeFit = (resizePty = false): boolean => {
+      const fitted = fitTerminal(
+        term,
+        fitAddon,
+        containerRef.current,
+        isOpen && !disposed,
+      );
+      if (!fitted || !resizePty) return fitted;
+
+      const sid = sessionIdRef.current;
+      if (sid) {
+        invoke("pty_resize", {
+          id: sid,
+          rows: term.rows,
+          cols: term.cols,
+        }).catch(() => {});
+      }
+      return true;
+    };
+
+    const tryOpenTerminal = (): void => {
+      if (disposed || isOpen) return;
+      const el = containerRef.current;
+      if (!hasRenderableSize(el)) return;
+
+      try {
+        term.open(el);
+        isOpen = true;
+        terminalOpenRef.current = true;
+        safeFit();
+        resolveOpenWaiters();
+      } catch {
+        // xterm can fail while Dockview is still settling panel dimensions.
+      }
+    };
+
+    openObserver = new ResizeObserver(() => {
+      tryOpenTerminal();
+      if (isOpen) {
+        openObserver?.disconnect();
+        openObserver = null;
+        safeFit(true);
+      }
+    });
+    openObserver.observe(containerRef.current);
+    tryOpenTerminal();
+    openTimer = setTimeout(tryOpenTerminal, 100);
 
     const lookupAgentSession = async (
       agentCmd: string,
@@ -212,6 +257,7 @@ export default function TerminalView(
       agentCmd: string,
       sinceMs: number,
       attempt = 0,
+      onFound?: (sessionId: string) => void,
     ) => {
       if (disposed || attempt >= 24) return;
 
@@ -225,30 +271,121 @@ export default function TerminalView(
           );
           if (agentSessionId) {
             rememberPanelAgentSession(agentSessionId);
+            onFound?.(agentSessionId);
             return;
           }
         } catch {
           /* ignore lookup failures */
         }
 
-        scheduleAgentSessionLookup(agentCmd, sinceMs, attempt + 1);
+        scheduleAgentSessionLookup(agentCmd, sinceMs, attempt + 1, onFound);
       }, attempt === 0 ? 1500 : 3000);
     };
 
     (async () => {
-      try {
-        id = await invoke("pty_open", {
-          spec: {
-            shellKind,
-            cwd: cwd ?? null,
-            rows: term.rows,
-            cols: term.cols,
-          },
-        });
-      } catch (err) {
-        term.writeln(`\x1b[31m[PTY Error] ${err}\x1b[0m`);
+      await waitForTerminalOpen();
+      if (disposed) return;
+
+      const agentCmd = props.params?.agentCommand;
+      const storedAgentSessionId =
+        props.params?.agentSessionId ?? getStoredAgentSessionId(props.api.id);
+      let resolvedAgentSessionId = storedAgentSessionId;
+      const startup = await resolveAgentStartupCommand(
+        agentCmd,
+        props.params?.resumeOnRestore,
+        storedAgentSessionId,
+        lookupAgentSession,
+      );
+      resolvedAgentSessionId = startup.agentSessionId;
+      const isExistingBinding =
+        Boolean(startup.agentSessionId) &&
+        startup.agentSessionId === storedAgentSessionId;
+      rememberPanelAgentSession(startup.agentSessionId, !isExistingBinding);
+
+      if (startup.error) {
+        term.writeln(`\x1b[31m[Agent Error] ${startup.error}\x1b[0m`);
         return;
       }
+
+      const openPty = async () => {
+        const commandStartedAt = Date.now();
+        unlisten = await listen<{
+          type: string;
+          data?: number[];
+          code?: number;
+        }>(`pty-chunk-${ptyId}`, (event) => {
+          if (disposed) return;
+          const p = event.payload;
+          if (p.type === "Data" && p.data) {
+            term.write(new Uint8Array(p.data));
+          } else if (p.type === "Exit") {
+            term.writeln(
+              `\r\n\x1b[90m[Process exited${
+                p.code != null ? ` code ${p.code}` : ""
+              }]\x1b[0m`,
+            );
+            updateSession(props.api.id, {
+              status: "exited",
+              exitCode: p.code ?? undefined,
+            });
+          }
+        });
+        if (disposed) {
+          unlisten();
+          unlisten = null;
+          return undefined;
+        }
+
+        try {
+          id = await invoke("pty_open", {
+            spec: {
+              id: ptyId,
+              shellKind,
+              cwd: cwd ?? null,
+              rows: term.rows,
+              cols: term.cols,
+              startupCommand: startup.command ?? null,
+            },
+          });
+        } catch (err) {
+          if (disposed) return undefined;
+          term.writeln(`\x1b[31m[PTY Error] ${err}\x1b[0m`);
+          return undefined;
+        }
+        if (disposed) {
+          invoke("pty_close", { id }).catch(() => {});
+          return undefined;
+        }
+
+        return commandStartedAt;
+      };
+
+      const agentCmdToBind =
+        agentCmd && !resolvedAgentSessionId ? agentCmd : undefined;
+      const commandStartedAt = agentCmdToBind
+        ? await queueNewAgentStartup(async () => {
+            const startedAt = await openPty();
+            if (!startedAt || disposed) return startedAt;
+
+            return new Promise<number | undefined>((resolve) => {
+              let resolved = false;
+              let timeout: ReturnType<typeof setTimeout> | null = null;
+              const done = (value: number | undefined) => {
+                if (resolved) return;
+                resolved = true;
+                if (timeout) clearTimeout(timeout);
+                resolve(value);
+              };
+
+              timeout = setTimeout(() => done(startedAt), 9000);
+              scheduleAgentSessionLookup(agentCmdToBind, startedAt, 0, () => {
+                done(startedAt);
+              });
+            });
+          })
+        : await openPty();
+
+      if (!commandStartedAt || disposed || !id) return;
 
       sessionIdRef.current = id;
 
@@ -266,79 +403,9 @@ export default function TerminalView(
         status: "running",
       });
 
-      const agentCmd = props.params?.agentCommand;
-      const storedAgentSessionId =
-        props.params?.agentSessionId ?? getStoredAgentSessionId(props.api.id);
-      let resolvedAgentSessionId = storedAgentSessionId;
-      const startupCommandPromise = resolveAgentStartupCommand(
-        agentCmd,
-        props.params?.resumeOnRestore,
-        storedAgentSessionId,
-        lookupAgentSession,
-      ).then((result) => {
-        resolvedAgentSessionId = result.agentSessionId;
-        const isExistingBinding =
-          Boolean(result.agentSessionId) &&
-          result.agentSessionId === storedAgentSessionId;
-        rememberPanelAgentSession(result.agentSessionId, !isExistingBinding);
-        return result;
-      });
-
-      const sendStartupCommand = async () => {
-        if (disposed || !agentCmd) return;
-        const startup = await startupCommandPromise;
-        if (disposed) return;
-        if (startup.error) {
-          term.writeln(`\r\n\x1b[31m[OpenCode Error] ${startup.error}\x1b[0m`);
-          return;
-        }
-        const startupCommand = startup.command;
-        if (!startupCommand) return;
-        const commandStartedAt = Date.now();
-        const encoded = Array.from(
-          new TextEncoder().encode(`${startupCommand}\r\n`),
-        );
-        await queueAgentStartup(async () => {
-          if (disposed) return;
-          await invoke("pty_write", { id, data: encoded });
-          await delay(300);
-        });
-        if (!resolvedAgentSessionId) {
-          scheduleAgentSessionLookup(
-            agentCmd,
-            commandStartedAt,
-          );
-        }
-      };
-
-      unlisten = await listen<{
-        type: string;
-        data?: number[];
-        code?: number;
-      }>(`pty-chunk-${id}`, (event) => {
-        const p = event.payload;
-        if (p.type === "Data" && p.data) {
-          term.write(new Uint8Array(p.data));
-        } else if (p.type === "Exit") {
-          term.writeln(
-            `\r\n\x1b[90m[Process exited${
-              p.code != null ? ` code ${p.code}` : ""
-            }]\x1b[0m`,
-          );
-          updateSession(props.api.id, {
-            status: "exited",
-            exitCode: p.code ?? undefined,
-          });
-        }
-      });
-
-      setTimeout(() => {
-        sendStartupCommand().catch((err) => {
-          if (!disposed) {
-            term.writeln(`\r\n\x1b[31m[Agent Error] ${String(err)}\x1b[0m`);
-          }
-        });
-      }, 800);
+      if (agentCmdToBind && !sessionLookupTimer) {
+        scheduleAgentSessionLookup(agentCmdToBind, commandStartedAt);
+      }
 
       // Wire keyboard input.
       dataDisposable = term.onData((data) => {
@@ -353,7 +420,10 @@ export default function TerminalView(
 
     return () => {
       disposed = true;
-      clearTimeout(fitTimer);
+      terminalOpenRef.current = false;
+      if (openTimer) clearTimeout(openTimer);
+      openObserver?.disconnect();
+      resolveOpenWaiters();
       if (sessionLookupTimer) clearTimeout(sessionLookupTimer);
       if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       dataDisposable?.dispose();
@@ -381,7 +451,13 @@ export default function TerminalView(
     const fit = fitAddonRef.current;
     if (!term) return;
     term.options.fontSize = zoomToFontSize(zoom);
-    fit?.fit();
+    const fitted = fitTerminal(
+      term,
+      fit,
+      containerRef.current,
+      terminalOpenRef.current,
+    );
+    if (!fitted) return;
     const sid = sessionIdRef.current;
     if (sid) {
       invoke("pty_resize", {
@@ -414,10 +490,13 @@ export default function TerminalView(
   const handleResize = useCallback(() => {
     const term = termRef.current;
     const fit = fitAddonRef.current;
-    if (!term || !fit) return;
-    const el = containerRef.current;
-    if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
-    fit.fit();
+    const fitted = fitTerminal(
+      term,
+      fit,
+      containerRef.current,
+      terminalOpenRef.current,
+    );
+    if (!term || !fitted) return;
     const sid = sessionIdRef.current;
     if (sid) {
       invoke("pty_resize", {
@@ -528,10 +607,34 @@ export default function TerminalView(
     <div
       ref={containerRef}
       className="xy-terminal-container"
-      onClick={() => termRef.current?.focus()}
+      onClick={() => {
+        if (terminalOpenRef.current) termRef.current?.focus();
+      }}
       onWheel={handleWheel}
     />
   );
+}
+
+function hasRenderableSize(el: HTMLElement | null): el is HTMLElement {
+  if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function fitTerminal(
+  term: Terminal | null,
+  fit: FitAddon | null,
+  container: HTMLElement | null,
+  isOpen: boolean,
+): boolean {
+  if (!term || !fit || !isOpen || !hasRenderableSize(container)) return false;
+
+  try {
+    fit.fit();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function getClipboardFiles(data: DataTransfer | null): File[] {
@@ -595,7 +698,13 @@ async function resolveAgentStartupCommand(
 ): Promise<AgentStartupResolution> {
   let resolvedAgentSessionId = agentSessionId;
 
-  if (resumeOnRestore && !resolvedAgentSessionId && cmd !== "opencode" && cmd) {
+  if (
+    resumeOnRestore &&
+    !resolvedAgentSessionId &&
+    cmd !== "opencode" &&
+    cmd !== "codex" &&
+    cmd
+  ) {
     try {
       resolvedAgentSessionId = await lookupAgentSession(cmd, 0);
     } catch {
@@ -637,11 +746,11 @@ function getAgentStartupCommand(
   }
 
   if (cmd === "opencode") return "opencode";
+  if (cmd === "codex") return "codex";
 
   return (
     {
       claude: "claude --continue",
-      codex: "codex resume --last",
     }[cmd] ?? `${cmd} --resume`
   );
 }
@@ -659,19 +768,17 @@ function queueAgentSessionLookup<T>(task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-function queueAgentStartup<T>(task: () => Promise<T>): Promise<T> {
-  const next = agentStartupQueue.then(task, task);
-  agentStartupQueue = next.then(
+function queueNewAgentStartup<T>(task: () => Promise<T>): Promise<T> {
+  const next = newAgentStartupQueue.then(task, task);
+  newAgentStartupQueue = next.then(
     () => undefined,
     () => undefined,
   );
   return next;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+function createPtyId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `pty-${Date.now()}-${Math.random()}`;
 }
 
 function agentLabel(cmd: string): string {

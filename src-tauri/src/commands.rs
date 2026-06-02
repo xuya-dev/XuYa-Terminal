@@ -26,10 +26,12 @@ pub async fn pty_open(
     let (tx, mut rx) = mpsc::channel::<PtyChunk>(256);
 
     let session = PtySession::spawn(
+        spec.id.as_deref(),
         spec.shell_kind,
         spec.cwd.as_deref(),
         spec.rows,
         spec.cols,
+        spec.startup_command.as_deref(),
         tx,
     )
     .map_err(|e| format!("Failed to spawn PTY: {e}"))?;

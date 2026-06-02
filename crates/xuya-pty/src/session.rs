@@ -43,16 +43,21 @@ impl PtySession {
     /// forward [`PtyChunk`]s to the frontend. The reader runs on a **dedicated
     /// blocking thread** so it never stalls the tokio runtime.
     pub fn spawn(
+        id: Option<&str>,
         shell_kind: ShellKind,
         cwd: Option<&str>,
         rows: u16,
         cols: u16,
+        startup_command: Option<&str>,
         tx: ChunkSender,
     ) -> Result<Self> {
-        let id = uuid::Uuid::new_v4().to_string();
+        let id = id
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // Build the shell command.
-        let mut cmd = resolve_command(&shell_kind)?;
+        let mut cmd = resolve_command(&shell_kind, startup_command)?;
 
         // Set working directory.
         if let Some(dir) = cwd {

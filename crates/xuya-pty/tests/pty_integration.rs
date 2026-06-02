@@ -9,7 +9,7 @@ use xuya_pty::PtySession;
 async fn spawn_powershell_and_read_prompt() {
     let (tx, mut rx) = mpsc::channel::<PtyChunk>(256);
 
-    let session = PtySession::spawn(ShellKind::PowerShell, None, 24, 80, tx)
+    let session = PtySession::spawn(None, ShellKind::PowerShell, None, 24, 80, None, tx)
         .expect("Failed to spawn powershell");
 
     // Wait for the prompt output with a timeout.
@@ -54,7 +54,7 @@ async fn spawn_powershell_and_read_prompt() {
 
 #[test]
 fn resolve_powershell_command() {
-    let cmd = xuya_pty::shell::resolve_command(&ShellKind::PowerShell);
+    let cmd = xuya_pty::shell::resolve_command(&ShellKind::PowerShell, None);
     assert!(
         cmd.is_ok(),
         "Failed to resolve powershell: {:?}",
@@ -64,6 +64,6 @@ fn resolve_powershell_command() {
 
 #[test]
 fn resolve_cmd_command() {
-    let cmd = xuya_pty::shell::resolve_command(&ShellKind::Cmd);
+    let cmd = xuya_pty::shell::resolve_command(&ShellKind::Cmd, None);
     assert!(cmd.is_ok(), "Failed to resolve cmd: {:?}", cmd.err());
 }
