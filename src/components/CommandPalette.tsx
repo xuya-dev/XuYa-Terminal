@@ -5,6 +5,8 @@ import { useUIStore } from "../stores/uiStore";
 import { useModalStore } from "../stores/modalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { FAMILIES } from "../themes";
+import { openTerminal } from "../lib/panels";
+import type { ShellKind } from "../stores/sessionStore";
 
 interface CommandPaletteProps {
   api: DockviewApi | null;
@@ -36,14 +38,9 @@ export default function CommandPalette({ api }: CommandPaletteProps) {
   const resetZoom = useSettingsStore((s) => s.resetZoom);
 
   const openShell = useCallback(
-    (shellKind: string, label: string) => {
+    (shellKind: ShellKind, label: string) => {
       if (!api) return;
-      api.addPanel({
-        id: `terminal-${Date.now()}`,
-        component: "terminal",
-        title: label,
-        params: { shellKind, label },
-      });
+      openTerminal(api, { shellKind, label });
     },
     [api],
   );
@@ -51,11 +48,10 @@ export default function CommandPalette({ api }: CommandPaletteProps) {
   const openAgent = useCallback(
     (command: string, label: string) => {
       if (!api) return;
-      api.addPanel({
-        id: `agent-${Date.now()}`,
-        component: "terminal",
-        title: label,
-        params: { shellKind: "powerShell", agentCommand: command, label },
+      openTerminal(api, {
+        shellKind: "powerShell",
+        agentCommand: command,
+        label,
       });
     },
     [api],

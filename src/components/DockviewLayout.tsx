@@ -13,6 +13,7 @@ import PanelTab from "./PanelTab";
 import Watermark from "./Watermark";
 import { RightHeaderActions } from "./HeaderActions";
 import { openTerminal } from "../lib/panels";
+import { prepareAgentPanelsForRestore } from "../lib/agentSessions";
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   terminal: TerminalView,
@@ -94,7 +95,9 @@ export default function DockviewLayout({ onApiReady }: Props) {
       const saved = localStorage.getItem(LAYOUT_KEY);
       if (saved) {
         try {
-          event.api.fromJSON(JSON.parse(saved));
+          const layout = JSON.parse(saved);
+          prepareAgentPanelsForRestore(layout);
+          event.api.fromJSON(layout);
           restored = true;
         } catch {
           localStorage.removeItem(LAYOUT_KEY);

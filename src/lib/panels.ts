@@ -2,6 +2,7 @@ import type { DockviewApi } from "dockview-react";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
 import type { ShellKind } from "../stores/sessionStore";
+import { createAgentSessionId, rememberAgentSession } from "./agentSessions";
 
 const SHELL_LABEL: Record<ShellKind, string> = {
   powerShell: "PowerShell",
@@ -37,13 +38,22 @@ export function openTerminal(api: DockviewApi, opts: OpenOpts = {}) {
   const label =
     opts.label ?? (opts.agentCommand ? opts.agentCommand : shellLabel(shellKind));
   const idPrefix = opts.agentCommand ? "agent" : "terminal";
+  const id = `${idPrefix}-${Date.now()}`;
   const cwd = opts.cwd ?? useProjectStore.getState().getActivePath() ?? undefined;
+  const agentSessionId = createAgentSessionId(opts.agentCommand);
+  rememberAgentSession(id, agentSessionId);
 
   return api.addPanel({
-    id: `${idPrefix}-${Date.now()}`,
+    id,
     component: "terminal",
     title: label,
-    params: { shellKind, label, agentCommand: opts.agentCommand, cwd },
+    params: {
+      shellKind,
+      label,
+      agentCommand: opts.agentCommand,
+      agentSessionId,
+      cwd,
+    },
     position: opts.referenceGroup
       ? {
           referenceGroup: opts.referenceGroup,

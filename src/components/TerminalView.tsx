@@ -12,11 +12,17 @@ import {
   useSessionStore,
   type ShellKind,
 } from "../stores/sessionStore";
+import {
+  getStoredAgentSessionId,
+  rememberAgentSession,
+} from "../lib/agentSessions";
 
 interface TerminalViewParams {
   shellKind: ShellKind;
   cwd?: string;
   agentCommand?: string;
+  agentSessionId?: string;
+  resumeOnRestore?: boolean;
   /** Pre-set label (used by sidebar / status bar). */
   label?: string;
 }
@@ -152,6 +158,39 @@ export default function TerminalView(
     let id = "";
     let dataDisposable: { dispose: () => void } | null = null;
     let unlisten: (() => void) | null = null;
+    let sessionLookupTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    const scheduleAgentSessionLookup = (
+      agentCmd: string,
+      sinceMs: number,
+      attempt = 0,
+    ) => {
+      if (disposed || attempt >= 24) return;
+
+      sessionLookupTimer = setTimeout(async () => {
+        if (disposed) return;
+
+        try {
+          const agentSessionId = await invoke<string | null>(
+            "find_latest_agent_session",
+            {
+              agentCommand: agentCmd,
+              cwd: cwd ?? null,
+              sinceMs,
+            },
+          );
+          if (agentSessionId) {
+            rememberAgentSession(props.api.id, agentSessionId);
+            return;
+          }
+        } catch {
+          /* ignore lookup failures */
+        }
+
+        scheduleAgentSessionLookup(agentCmd, sinceMs, attempt + 1);
+      }, attempt === 0 ? 1500 : 3000);
+    };
 
     (async () => {
       try {
@@ -185,6 +224,13 @@ export default function TerminalView(
       });
 
       const agentCmd = props.params?.agentCommand;
+      const agentSessionId =
+        props.params?.agentSessionId ?? getStoredAgentSessionId(props.api.id);
+      const startupCommand = getAgentStartupCommand(
+        agentCmd,
+        props.params?.resumeOnRestore,
+        agentSessionId,
+      );
       let firstOutput = true;
       unlisten = await listen<{
         type: string;
@@ -194,13 +240,17 @@ export default function TerminalView(
         const p = event.payload;
         if (p.type === "Data" && p.data) {
           term.write(new Uint8Array(p.data));
-          if (firstOutput && agentCmd) {
+          if (firstOutput && startupCommand) {
             firstOutput = false;
             setTimeout(() => {
+              const commandStartedAt = Date.now();
               const encoded = Array.from(
-                new TextEncoder().encode(`${agentCmd}\r\n`),
+                new TextEncoder().encode(`${startupCommand}\r\n`),
               );
               invoke("pty_write", { id, data: encoded }).catch(() => {});
+              if (agentCmd && !agentSessionId) {
+                scheduleAgentSessionLookup(agentCmd, commandStartedAt);
+              }
             }, 800);
           }
         } else if (p.type === "Exit") {
@@ -228,7 +278,9 @@ export default function TerminalView(
     })();
 
     return () => {
+      disposed = true;
       clearTimeout(fitTimer);
+      if (sessionLookupTimer) clearTimeout(sessionLookupTimer);
       dataDisposable?.dispose();
       unlisten?.();
       if (id) invoke("pty_close", { id }).catch(() => {});
@@ -439,6 +491,42 @@ function imagePasteSequence(cmd: string | undefined): number[] {
 
 function quotePath(path: string): string {
   return `"${path.replace(/"/g, '\\"')}"`;
+}
+
+function getAgentStartupCommand(
+  cmd: string | undefined,
+  resumeOnRestore: boolean | undefined,
+  agentSessionId: string | undefined,
+): string | undefined {
+  if (!cmd) return undefined;
+  if (!resumeOnRestore) {
+    if (cmd === "claude" && agentSessionId) {
+      return `claude --session-id ${quoteArg(agentSessionId)}`;
+    }
+    return cmd;
+  }
+
+  if (agentSessionId) {
+    return (
+      {
+        claude: `claude --resume ${quoteArg(agentSessionId)}`,
+        codex: `codex resume ${quoteArg(agentSessionId)}`,
+        opencode: `opencode --session ${quoteArg(agentSessionId)}`,
+      }[cmd] ?? `${cmd} --resume ${quoteArg(agentSessionId)}`
+    );
+  }
+
+  return (
+    {
+      claude: "claude --continue",
+      codex: "codex resume --last",
+      opencode: "opencode --continue",
+    }[cmd] ?? `${cmd} --resume`
+  );
+}
+
+function quoteArg(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`;
 }
 
 function agentLabel(cmd: string): string {
