@@ -15,6 +15,8 @@ fn main() {
             commands::pty_write,
             commands::pty_resize,
             commands::pty_close,
+            commands::save_temp_image,
+            commands::clipboard_has_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running XuYa");

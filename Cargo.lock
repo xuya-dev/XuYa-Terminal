@@ -4796,6 +4796,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tokio",
  "uuid",
+ "windows-sys 0.61.2",
  "xuya-core",
  "xuya-pty",
 ]

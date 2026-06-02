@@ -31,7 +31,10 @@ pub async fn pty_open(
     let sessions = state.sessions.clone();
     tokio::spawn(async move {
         while let Some(chunk) = rx.recv().await {
-            if app.emit(&format!("pty-chunk-{session_id}"), &chunk).is_err() {
+            if app
+                .emit(&format!("pty-chunk-{session_id}"), &chunk)
+                .is_err()
+            {
                 break;
             }
         }
@@ -51,7 +54,9 @@ pub async fn pty_write(
         .sessions
         .get(&id)
         .ok_or_else(|| format!("Session not found: {id}"))?;
-    session.write(&data).map_err(|e| format!("Write failed: {e}"))
+    session
+        .write(&data)
+        .map_err(|e| format!("Write failed: {e}"))
 }
 
 #[tauri::command]
@@ -71,12 +76,61 @@ pub async fn pty_resize(
 }
 
 #[tauri::command]
-pub async fn pty_close(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn pty_close(id: String, state: State<'_, AppState>) -> Result<(), String> {
     if let Some((_, session)) = state.sessions.remove(&id) {
         session.kill().map_err(|e| format!("Kill failed: {e}"))?;
     }
     Ok(())
+}
+
+/// Save clipboard image bytes to a unique temp file and return its path.
+#[tauri::command]
+pub async fn save_temp_image(name: String, data: Vec<u8>) -> Result<String, String> {
+    use std::fs::File;
+    use std::io::Write;
+    use uuid::Uuid;
+
+    let temp_dir = std::env::temp_dir();
+    let extension = std::path::Path::new(&name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("png");
+
+    let unique_name = format!("xuya_{}.{}", Uuid::new_v4(), extension);
+    let file_path = temp_dir.join(unique_name);
+
+    let mut file =
+        File::create(&file_path).map_err(|e| format!("Failed to create temp file: {e}"))?;
+    file.write_all(&data)
+        .map_err(|e| format!("Failed to write temp file: {e}"))?;
+
+    let path_str = file_path
+        .to_str()
+        .ok_or_else(|| "Failed to convert path to UTF-8 string".to_string())?
+        .to_string();
+
+    Ok(path_str)
+}
+
+/// Return true when the native Windows clipboard currently exposes image data.
+#[tauri::command]
+pub async fn clipboard_has_image() -> Result<bool, String> {
+    Ok(native_clipboard_has_image())
+}
+
+#[cfg(windows)]
+fn native_clipboard_has_image() -> bool {
+    use windows_sys::Win32::System::DataExchange::IsClipboardFormatAvailable;
+    use windows_sys::Win32::System::Ole::{CF_BITMAP, CF_DIB, CF_DIBV5};
+
+    unsafe {
+        IsClipboardFormatAvailable(CF_DIBV5 as u32) != 0
+            || IsClipboardFormatAvailable(CF_DIB as u32) != 0
+            || IsClipboardFormatAvailable(CF_BITMAP as u32) != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn native_clipboard_has_image() -> bool {
+    false
 }

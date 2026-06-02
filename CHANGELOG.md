@@ -28,6 +28,7 @@
 
 ### 🤖 终端与 AI 编程适配 (PTY & AI Integration)
 - **自动回车执行**：将写入 PTY 终端的 Agent 会话（如 `Claude Code`、`Codex`、`OpenCode`）启动指令末尾的回车符替换为适用于 Windows 环境的标准的回车换行符 `\r\n`。现在点击相应选项即可在新建标签页中实现免手动干预的自动回车运行。
+- **剪贴板图片粘贴支持**：在终端视图内识别图片粘贴事件。Claude Code / Codex / OpenCode 会按各自 Windows 图片粘贴快捷键触发原生剪贴板读取；图片文件或 WebView 可读取的截图数据会保存至系统临时路径，并向当前终端注入双引号包裹的绝对文件路径。
 
 ### 📦 项目开源准备 (Open-Source Prep)
 - **开源文件准备**：
