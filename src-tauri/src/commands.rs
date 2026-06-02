@@ -2,6 +2,7 @@
 
 use crate::state::AppState;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -11,6 +12,9 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 use xuya_core::{PtyChunk, SessionSpec};
 use xuya_pty::PtySession;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 /// Open a new PTY session. Returns the session ID.
 #[tauri::command]
@@ -129,9 +133,11 @@ pub async fn find_latest_agent_session(
     agent_command: String,
     cwd: Option<String>,
     since_ms: u64,
+    exclude_ids: Vec<String>,
 ) -> Result<Option<String>, String> {
     tokio::task::spawn_blocking(move || {
-        find_latest_agent_session_inner(&agent_command, cwd.as_deref(), since_ms)
+        let exclude_ids = exclude_ids.into_iter().collect::<HashSet<_>>();
+        find_latest_agent_session_inner(&agent_command, cwd.as_deref(), since_ms, &exclude_ids)
     })
     .await
     .map_err(|e| format!("Session lookup failed: {e}"))?
@@ -141,6 +147,7 @@ fn find_latest_agent_session_inner(
     agent_command: &str,
     cwd: Option<&str>,
     since_ms: u64,
+    exclude_ids: &HashSet<String>,
 ) -> Result<Option<String>, String> {
     let since = system_time_from_millis(since_ms).unwrap_or(UNIX_EPOCH);
     let since = since
@@ -148,14 +155,18 @@ fn find_latest_agent_session_inner(
         .unwrap_or(UNIX_EPOCH);
 
     match agent_command {
-        "claude" => latest_claude_session(cwd, since),
-        "codex" => latest_codex_session(cwd, since),
-        "opencode" => latest_opencode_session(cwd, since),
+        "claude" => latest_claude_session(cwd, since, exclude_ids),
+        "codex" => latest_codex_session(cwd, since, exclude_ids),
+        "opencode" => latest_opencode_session(cwd, since, exclude_ids),
         _ => Ok(None),
     }
 }
 
-fn latest_claude_session(cwd: Option<&str>, since: SystemTime) -> Result<Option<String>, String> {
+fn latest_claude_session(
+    cwd: Option<&str>,
+    since: SystemTime,
+    exclude_ids: &HashSet<String>,
+) -> Result<Option<String>, String> {
     let home = match home_dir() {
         Some(path) => path,
         None => return Ok(None),
@@ -179,6 +190,9 @@ fn latest_claude_session(cwd: Option<&str>, since: SystemTime) -> Result<Option<
         let Some(session_id) = session_id else {
             continue;
         };
+        if exclude_ids.contains(&session_id) {
+            continue;
+        }
         if best.as_ref().map_or(true, |(time, _)| modified > *time) {
             best = Some((modified, session_id));
         }
@@ -187,7 +201,11 @@ fn latest_claude_session(cwd: Option<&str>, since: SystemTime) -> Result<Option<
     Ok(best.map(|(_, id)| id))
 }
 
-fn latest_codex_session(cwd: Option<&str>, since: SystemTime) -> Result<Option<String>, String> {
+fn latest_codex_session(
+    cwd: Option<&str>,
+    since: SystemTime,
+    exclude_ids: &HashSet<String>,
+) -> Result<Option<String>, String> {
     let home = match home_dir() {
         Some(path) => path,
         None => return Ok(None),
@@ -220,6 +238,9 @@ fn latest_codex_session(cwd: Option<&str>, since: SystemTime) -> Result<Option<S
         let Some(session_id) = payload.get("id").and_then(Value::as_str) else {
             continue;
         };
+        if exclude_ids.contains(session_id) {
+            continue;
+        }
         if best.as_ref().map_or(true, |(time, _)| modified > *time) {
             best = Some((modified, session_id.to_string()));
         }
@@ -228,8 +249,12 @@ fn latest_codex_session(cwd: Option<&str>, since: SystemTime) -> Result<Option<S
     Ok(best.map(|(_, id)| id))
 }
 
-fn latest_opencode_session(cwd: Option<&str>, since: SystemTime) -> Result<Option<String>, String> {
-    if let Some(id) = latest_opencode_session_from_cli(cwd, since)? {
+fn latest_opencode_session(
+    cwd: Option<&str>,
+    since: SystemTime,
+    exclude_ids: &HashSet<String>,
+) -> Result<Option<String>, String> {
+    if let Some(id) = latest_opencode_session_from_cli(cwd, since, exclude_ids)? {
         return Ok(Some(id));
     }
 
@@ -254,6 +279,9 @@ fn latest_opencode_session(cwd: Option<&str>, since: SystemTime) -> Result<Optio
         let Some(session_id) = file.file_stem().and_then(|name| name.to_str()) else {
             continue;
         };
+        if exclude_ids.contains(session_id) {
+            continue;
+        }
         if best.as_ref().map_or(true, |(time, _)| modified > *time) {
             best = Some((modified, session_id.to_string()));
         }
@@ -265,14 +293,15 @@ fn latest_opencode_session(cwd: Option<&str>, since: SystemTime) -> Result<Optio
 fn latest_opencode_session_from_cli(
     cwd: Option<&str>,
     since: SystemTime,
+    exclude_ids: &HashSet<String>,
 ) -> Result<Option<String>, String> {
-    let mut cmd = Command::new("opencode");
+    let mut cmd = opencode_command();
     cmd.arg("session")
         .arg("list")
         .arg("--format")
         .arg("json")
         .arg("--max-count")
-        .arg("5");
+        .arg("20");
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
@@ -310,12 +339,65 @@ fn latest_opencode_session_from_cli(
         else {
             continue;
         };
+        if exclude_ids.contains(session_id) {
+            continue;
+        }
         if best.as_ref().map_or(true, |(time, _)| updated > *time) {
             best = Some((updated, session_id.to_string()));
         }
     }
 
     Ok(best.map(|(_, id)| id))
+}
+
+fn opencode_command() -> Command {
+    let executable = resolve_opencode_executable().unwrap_or_else(|| PathBuf::from("opencode"));
+    let mut cmd = Command::new(executable);
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+#[cfg(windows)]
+fn resolve_opencode_executable() -> Option<PathBuf> {
+    first_path_from_where("opencode.exe")
+        .or_else(|| first_path_from_where("opencode.cmd").and_then(resolve_opencode_cmd_target))
+        .or_else(|| first_path_from_where("opencode.cmd"))
+}
+
+#[cfg(not(windows))]
+fn resolve_opencode_executable() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(windows)]
+fn first_path_from_where(command: &str) -> Option<PathBuf> {
+    let output = Command::new("where.exe").arg(command).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .find(|path| path.exists())
+}
+
+#[cfg(windows)]
+fn resolve_opencode_cmd_target(cmd_path: PathBuf) -> Option<PathBuf> {
+    let bin_dir = cmd_path.parent()?;
+    let exe = bin_dir
+        .join("node_modules")
+        .join("opencode-ai")
+        .join("bin")
+        .join("opencode.exe");
+
+    exe.is_file().then_some(exe)
 }
 
 fn collect_files(root: &Path, extension: &str) -> Result<Vec<PathBuf>, String> {

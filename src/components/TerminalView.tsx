@@ -13,6 +13,8 @@ import {
   type ShellKind,
 } from "../stores/sessionStore";
 import {
+  claimAgentSession,
+  getExcludedAgentSessionIds,
   getStoredAgentSessionId,
   rememberAgentSession,
 } from "../lib/agentSessions";
@@ -35,6 +37,9 @@ interface TerminalViewParams {
 const REGISTRY = new Map<string, Terminal>();
 const ALT_V = [27, 118];
 const CTRL_V = [22];
+const LAYOUT_KEY = "xuya-layout";
+let agentSessionLookupQueue: Promise<void> = Promise.resolve();
+let agentStartupQueue: Promise<void> = Promise.resolve();
 
 export function clearTerminal(panelId: string): void {
   REGISTRY.get(panelId)?.clear();
@@ -159,7 +164,49 @@ export default function TerminalView(
     let dataDisposable: { dispose: () => void } | null = null;
     let unlisten: (() => void) | null = null;
     let sessionLookupTimer: ReturnType<typeof setTimeout> | null = null;
+    let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
+
+    const lookupAgentSession = async (
+      agentCmd: string,
+      sinceMs: number,
+    ): Promise<string | undefined> => {
+      const agentSessionId = await queueAgentSessionLookup(async () => {
+        const nextAgentSessionId = await invoke<string | null>(
+          "find_latest_agent_session",
+          {
+            agentCommand: agentCmd,
+            cwd: cwd ?? null,
+            sinceMs,
+            excludeIds: getExcludedAgentSessionIds(props.api.id),
+          },
+        );
+        if (nextAgentSessionId) {
+          claimAgentSession(props.api.id, nextAgentSessionId);
+        }
+
+        return nextAgentSessionId;
+      });
+
+      return agentSessionId ?? undefined;
+    };
+
+    const rememberPanelAgentSession = (
+      sessionId: string | undefined,
+      persistLayout = true,
+    ): void => {
+      if (!sessionId) return;
+      rememberAgentSession(props.api.id, sessionId);
+      if (props.api.getParameters<TerminalViewParams>().agentSessionId !== sessionId) {
+        props.api.updateParameters({ agentSessionId: sessionId });
+      }
+      if (persistLayout) {
+        if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
+        layoutPersistTimer = setTimeout(() => {
+          persistLayoutSnapshot(props.containerApi);
+        }, 1200);
+      }
+    };
 
     const scheduleAgentSessionLookup = (
       agentCmd: string,
@@ -172,16 +219,12 @@ export default function TerminalView(
         if (disposed) return;
 
         try {
-          const agentSessionId = await invoke<string | null>(
-            "find_latest_agent_session",
-            {
-              agentCommand: agentCmd,
-              cwd: cwd ?? null,
-              sinceMs,
-            },
+          const agentSessionId = await lookupAgentSession(
+            agentCmd,
+            sinceMs,
           );
           if (agentSessionId) {
-            rememberAgentSession(props.api.id, agentSessionId);
+            rememberPanelAgentSession(agentSessionId);
             return;
           }
         } catch {
@@ -224,14 +267,50 @@ export default function TerminalView(
       });
 
       const agentCmd = props.params?.agentCommand;
-      const agentSessionId =
+      const storedAgentSessionId =
         props.params?.agentSessionId ?? getStoredAgentSessionId(props.api.id);
-      const startupCommand = getAgentStartupCommand(
+      let resolvedAgentSessionId = storedAgentSessionId;
+      const startupCommandPromise = resolveAgentStartupCommand(
         agentCmd,
         props.params?.resumeOnRestore,
-        agentSessionId,
-      );
-      let firstOutput = true;
+        storedAgentSessionId,
+        lookupAgentSession,
+      ).then((result) => {
+        resolvedAgentSessionId = result.agentSessionId;
+        const isExistingBinding =
+          Boolean(result.agentSessionId) &&
+          result.agentSessionId === storedAgentSessionId;
+        rememberPanelAgentSession(result.agentSessionId, !isExistingBinding);
+        return result;
+      });
+
+      const sendStartupCommand = async () => {
+        if (disposed || !agentCmd) return;
+        const startup = await startupCommandPromise;
+        if (disposed) return;
+        if (startup.error) {
+          term.writeln(`\r\n\x1b[31m[OpenCode Error] ${startup.error}\x1b[0m`);
+          return;
+        }
+        const startupCommand = startup.command;
+        if (!startupCommand) return;
+        const commandStartedAt = Date.now();
+        const encoded = Array.from(
+          new TextEncoder().encode(`${startupCommand}\r\n`),
+        );
+        await queueAgentStartup(async () => {
+          if (disposed) return;
+          await invoke("pty_write", { id, data: encoded });
+          await delay(300);
+        });
+        if (!resolvedAgentSessionId) {
+          scheduleAgentSessionLookup(
+            agentCmd,
+            commandStartedAt,
+          );
+        }
+      };
+
       unlisten = await listen<{
         type: string;
         data?: number[];
@@ -240,19 +319,6 @@ export default function TerminalView(
         const p = event.payload;
         if (p.type === "Data" && p.data) {
           term.write(new Uint8Array(p.data));
-          if (firstOutput && startupCommand) {
-            firstOutput = false;
-            setTimeout(() => {
-              const commandStartedAt = Date.now();
-              const encoded = Array.from(
-                new TextEncoder().encode(`${startupCommand}\r\n`),
-              );
-              invoke("pty_write", { id, data: encoded }).catch(() => {});
-              if (agentCmd && !agentSessionId) {
-                scheduleAgentSessionLookup(agentCmd, commandStartedAt);
-              }
-            }, 800);
-          }
         } else if (p.type === "Exit") {
           term.writeln(
             `\r\n\x1b[90m[Process exited${
@@ -265,6 +331,14 @@ export default function TerminalView(
           });
         }
       });
+
+      setTimeout(() => {
+        sendStartupCommand().catch((err) => {
+          if (!disposed) {
+            term.writeln(`\r\n\x1b[31m[Agent Error] ${String(err)}\x1b[0m`);
+          }
+        });
+      }, 800);
 
       // Wire keyboard input.
       dataDisposable = term.onData((data) => {
@@ -281,6 +355,7 @@ export default function TerminalView(
       disposed = true;
       clearTimeout(fitTimer);
       if (sessionLookupTimer) clearTimeout(sessionLookupTimer);
+      if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       dataDisposable?.dispose();
       unlisten?.();
       if (id) invoke("pty_close", { id }).catch(() => {});
@@ -489,8 +564,53 @@ function imagePasteSequence(cmd: string | undefined): number[] {
   return cmd === "claude" ? ALT_V : CTRL_V;
 }
 
+type AgentSessionLookup = (
+  agentCmd: string,
+  sinceMs: number,
+) => Promise<string | undefined>;
+
+interface AgentStartupResolution {
+  command: string | undefined;
+  agentSessionId: string | undefined;
+  error?: string;
+}
+
 function quotePath(path: string): string {
   return `"${path.replace(/"/g, '\\"')}"`;
+}
+
+function persistLayoutSnapshot(containerApi: { toJSON: () => unknown }): void {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(containerApi.toJSON()));
+  } catch {
+    /* ignore */
+  }
+}
+
+async function resolveAgentStartupCommand(
+  cmd: string | undefined,
+  resumeOnRestore: boolean | undefined,
+  agentSessionId: string | undefined,
+  lookupAgentSession: AgentSessionLookup,
+): Promise<AgentStartupResolution> {
+  let resolvedAgentSessionId = agentSessionId;
+
+  if (resumeOnRestore && !resolvedAgentSessionId && cmd !== "opencode" && cmd) {
+    try {
+      resolvedAgentSessionId = await lookupAgentSession(cmd, 0);
+    } catch {
+      /* fall back to the agent's default resume behavior */
+    }
+  }
+
+  return {
+    command: getAgentStartupCommand(
+      cmd,
+      resumeOnRestore,
+      resolvedAgentSessionId,
+    ),
+    agentSessionId: resolvedAgentSessionId,
+  };
 }
 
 function getAgentStartupCommand(
@@ -511,22 +631,47 @@ function getAgentStartupCommand(
       {
         claude: `claude --resume ${quoteArg(agentSessionId)}`,
         codex: `codex resume ${quoteArg(agentSessionId)}`,
-        opencode: `opencode --session ${quoteArg(agentSessionId)}`,
+        opencode: `opencode -s ${quoteArg(agentSessionId)}`,
       }[cmd] ?? `${cmd} --resume ${quoteArg(agentSessionId)}`
     );
   }
+
+  if (cmd === "opencode") return "opencode";
 
   return (
     {
       claude: "claude --continue",
       codex: "codex resume --last",
-      opencode: "opencode --continue",
     }[cmd] ?? `${cmd} --resume`
   );
 }
 
 function quoteArg(value: string): string {
   return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function queueAgentSessionLookup<T>(task: () => Promise<T>): Promise<T> {
+  const next = agentSessionLookupQueue.then(task, task);
+  agentSessionLookupQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+function queueAgentStartup<T>(task: () => Promise<T>): Promise<T> {
+  const next = agentStartupQueue.then(task, task);
+  agentStartupQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function agentLabel(cmd: string): string {

@@ -38,7 +38,10 @@ export function openTerminal(api: DockviewApi, opts: OpenOpts = {}) {
   const label =
     opts.label ?? (opts.agentCommand ? opts.agentCommand : shellLabel(shellKind));
   const idPrefix = opts.agentCommand ? "agent" : "terminal";
-  const id = `${idPrefix}-${Date.now()}`;
+  const suffix =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const id = `${idPrefix}-${suffix}`;
   const cwd = opts.cwd ?? useProjectStore.getState().getActivePath() ?? undefined;
   const agentSessionId = createAgentSessionId(opts.agentCommand);
   rememberAgentSession(id, agentSessionId);

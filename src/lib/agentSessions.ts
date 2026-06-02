@@ -1,6 +1,7 @@
 const AGENT_SESSION_KEY = "xuya-agent-sessions";
 
 type AgentSessionMap = Record<string, string>;
+const runtimeClaims = new Map<string, string>();
 
 function readAgentSessions(): AgentSessionMap {
   try {
@@ -27,11 +28,30 @@ export function getStoredAgentSessionId(panelId: string): string | undefined {
   return readAgentSessions()[panelId];
 }
 
+export function claimAgentSession(panelId: string, sessionId: string): void {
+  runtimeClaims.set(sessionId, panelId);
+}
+
+export function getExcludedAgentSessionIds(panelId: string): string[] {
+  const excluded = new Set<string>();
+
+  Object.entries(readAgentSessions()).forEach(([storedPanelId, sessionId]) => {
+    if (storedPanelId !== panelId) excluded.add(sessionId);
+  });
+
+  runtimeClaims.forEach((claimedPanelId, sessionId) => {
+    if (claimedPanelId !== panelId) excluded.add(sessionId);
+  });
+
+  return [...excluded];
+}
+
 export function rememberAgentSession(
   panelId: string,
   sessionId: string | undefined,
 ): void {
   if (!sessionId) return;
+  claimAgentSession(panelId, sessionId);
   writeAgentSessions({ ...readAgentSessions(), [panelId]: sessionId });
 }
 
@@ -53,26 +73,43 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function prepareAgentPanelsForRestore(value: unknown): void {
   const sessions = readAgentSessions();
-  visitLayout(value, sessions);
+  const changed = visitLayout(value, sessions);
+  if (changed) writeAgentSessions(sessions);
 }
 
-function visitLayout(value: unknown, sessions: AgentSessionMap): void {
+function visitLayout(value: unknown, sessions: AgentSessionMap): boolean {
+  let changed = false;
+
   if (Array.isArray(value)) {
-    value.forEach((item) => visitLayout(item, sessions));
-    return;
+    value.forEach((item) => {
+      changed = visitLayout(item, sessions) || changed;
+    });
+    return changed;
   }
 
-  if (!isRecord(value)) return;
+  if (!isRecord(value)) return false;
 
   if (isRecord(value.params) && typeof value.params.agentCommand === "string") {
     value.params.resumeOnRestore = true;
     if (typeof value.id === "string") {
-      const sessionId = sessions[value.id];
+      const embeddedSessionId =
+        typeof value.params.agentSessionId === "string"
+          ? value.params.agentSessionId
+          : undefined;
+      const sessionId = embeddedSessionId ?? sessions[value.id];
       if (sessionId) {
         value.params.agentSessionId = sessionId;
+      }
+      if (embeddedSessionId && sessions[value.id] !== embeddedSessionId) {
+        sessions[value.id] = embeddedSessionId;
+        changed = true;
       }
     }
   }
 
-  Object.values(value).forEach((item) => visitLayout(item, sessions));
+  Object.values(value).forEach((item) => {
+    changed = visitLayout(item, sessions) || changed;
+  });
+
+  return changed;
 }

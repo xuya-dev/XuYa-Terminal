@@ -99,6 +99,13 @@ export default function DockviewLayout({ onApiReady }: Props) {
           prepareAgentPanelsForRestore(layout);
           event.api.fromJSON(layout);
           restored = true;
+          setTimeout(() => {
+            try {
+              localStorage.setItem(LAYOUT_KEY, JSON.stringify(event.api.toJSON()));
+            } catch {
+              /* ignore */
+            }
+          }, 1500);
         } catch {
           localStorage.removeItem(LAYOUT_KEY);
         }
