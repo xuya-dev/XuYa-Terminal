@@ -7,15 +7,14 @@ import {
   HelpCircle,
   TerminalSquare,
   SquareTerminal,
-  GitBranch,
   ChevronDown,
 } from "lucide-react";
 import { useState } from "react";
 import { useSessionStore, type SessionMeta } from "../stores/sessionStore";
 import { useUIStore } from "../stores/uiStore";
 import { useModalStore } from "../stores/modalStore";
-import { openTerminal } from "../lib/panels";
-import ContextMenu, { type MenuEntry } from "./ContextMenu";
+import ContextMenu from "./ContextMenu";
+import { buildNewSessionItems } from "./newSessionMenu";
 
 interface Props {
   api: DockviewApi | null;
@@ -32,8 +31,6 @@ function sessionIcon(s: SessionMeta) {
       return <SquareTerminal size={18} />;
     case "wsl":
       return <TerminalSquare size={18} />;
-    case "gitBash":
-      return <GitBranch size={18} />;
     case "powerShell":
     case "pwsh":
     default:
@@ -58,59 +55,7 @@ export default function Sidebar({ api }: Props) {
     api?.getPanel(id)?.focus();
   };
 
-  /** Build the new-session dropdown items. */
-  const newSessionItems: MenuEntry[] = [
-    {
-      id: "ps",
-      label: "PowerShell",
-      icon: <TerminalSquare size={14} />,
-      onClick: () => api && openTerminal(api, { shellKind: "powerShell", label: "PowerShell" }),
-    },
-    {
-      id: "cmd",
-      label: "CMD",
-      icon: <SquareTerminal size={14} />,
-      onClick: () => api && openTerminal(api, { shellKind: "cmd", label: "CMD" }),
-    },
-    "separator" as const,
-    { header: "Coding" },
-    {
-      id: "claude",
-      label: "Claude Code",
-      icon: <ClaudeCode size={14} />,
-      onClick: () =>
-        api &&
-        openTerminal(api, {
-          shellKind: "powerShell",
-          agentCommand: "claude",
-          label: "Claude Code",
-        }),
-    },
-    {
-      id: "codex",
-      label: "Codex",
-      icon: <Codex size={14} />,
-      onClick: () =>
-        api &&
-        openTerminal(api, {
-          shellKind: "powerShell",
-          agentCommand: "codex",
-          label: "Codex",
-        }),
-    },
-    {
-      id: "opencode",
-      label: "OpenCode",
-      icon: <OpenCode size={14} />,
-      onClick: () =>
-        api &&
-        openTerminal(api, {
-          shellKind: "powerShell",
-          agentCommand: "opencode",
-          label: "OpenCode",
-        }),
-    },
-  ];
+  const newSessionItems = buildNewSessionItems(api);
 
   /** Open new-session dropdown at the button position. */
   const openNewMenu = (e: React.MouseEvent<HTMLElement>) => {
