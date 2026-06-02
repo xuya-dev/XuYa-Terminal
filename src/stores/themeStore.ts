@@ -81,6 +81,18 @@ export function applyThemeToDOM(palette: ThemePalette, mode: ThemeMode) {
       ? "0 8px 24px rgba(15, 17, 32, 0.08), 0 1px 2px rgba(15, 17, 32, 0.04)"
       : "0 8px 32px rgba(0, 0, 0, 0.5)",
   );
+  set(
+    "--xy-shadow-soft",
+    mode === "light"
+      ? "0 1px 2px rgba(15, 17, 32, 0.04), 0 8px 18px rgba(15, 17, 32, 0.045)"
+      : "0 1px 0 rgba(255, 255, 255, 0.03), 0 14px 28px rgba(0, 0, 0, 0.26)",
+  );
+  set(
+    "--xy-shadow-menu",
+    mode === "light"
+      ? "0 14px 34px rgba(15, 17, 32, 0.14), 0 2px 8px rgba(15, 17, 32, 0.08)"
+      : "0 18px 44px rgba(0, 0, 0, 0.46), 0 0 0 1px rgba(255, 255, 255, 0.035)",
+  );
 
   // Bridge to Dockview. The element may not exist at first call (theme
   // applies before React mounts) so we retry once after paint.
@@ -100,6 +112,9 @@ export function applyThemeToDOM(palette: ThemePalette, mode: ThemeMode) {
     s.setProperty("--dv-inactivegroup-visiblepanel-tab-color", c.foregroundMuted);
     s.setProperty("--dv-inactivegroup-hiddenpanel-tab-color", c.foregroundMuted);
     s.setProperty("--dv-tab-divider-color", c.borderSoft);
+    s.setProperty("--dv-context-menu-background-color", c.surface);
+    s.setProperty("--dv-context-menu-color", c.foreground);
+    s.setProperty("--dv-icon-hover-background-color", c.surfaceHover);
     return true;
   };
 

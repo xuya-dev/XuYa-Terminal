@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, Clock, FolderOpen, Maximize2 } from "lucide-react";
+import { Activity, Clock, FolderOpen, Maximize2, Minus, Plus } from "lucide-react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 
@@ -34,6 +34,8 @@ export default function StatusBar() {
     s.sessions.find((x) => x.id === s.activeId) ?? null,
   );
   const zoom = useSettingsStore((s) => s.zoom);
+  const zoomIn = useSettingsStore((s) => s.zoomIn);
+  const zoomOut = useSettingsStore((s) => s.zoomOut);
   const resetZoom = useSettingsStore((s) => s.resetZoom);
   const [, setTick] = useState(0);
 
@@ -72,14 +74,32 @@ export default function StatusBar() {
       <div className="xy-status-right">
         <span className="xy-status-pill">UTF-8</span>
         <span className="xy-status-pill">{eolFor(active?.shellKind)}</span>
-        <button
-          className="xy-status-pill xy-status-pill--btn"
-          onClick={resetZoom}
-          title="点击重置为 100%"
-        >
-          <Maximize2 size={11} strokeWidth={1.7} />
-          {zoom}%
-        </button>
+        <div className="xy-status-zoom" aria-label="终端字号缩放">
+          <button
+            className="xy-status-zoom-btn"
+            onClick={zoomOut}
+            title="缩小终端字号"
+            aria-label="缩小终端字号"
+          >
+            <Minus size={10} strokeWidth={2} />
+          </button>
+          <button
+            className="xy-status-pill xy-status-pill--btn"
+            onClick={resetZoom}
+            title={zoom === 100 ? "终端字号 100%" : "重置终端字号为 100%"}
+          >
+            <Maximize2 size={11} strokeWidth={1.7} />
+            {zoom}%
+          </button>
+          <button
+            className="xy-status-zoom-btn"
+            onClick={zoomIn}
+            title="放大终端字号"
+            aria-label="放大终端字号"
+          >
+            <Plus size={10} strokeWidth={2} />
+          </button>
+        </div>
       </div>
     </footer>
   );
