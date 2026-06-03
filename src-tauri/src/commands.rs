@@ -27,6 +27,7 @@ pub async fn pty_open(
         spec.cwd.as_deref(),
         spec.rows,
         spec.cols,
+        spec.launch_command.as_deref(),
         spec.startup_command.as_deref(),
         tx,
     )

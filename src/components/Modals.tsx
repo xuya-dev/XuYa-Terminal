@@ -1,7 +1,11 @@
 import { useEffect, useCallback, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { useModalStore } from "../stores/modalStore";
 import { useSettingsStore, type CursorStyle } from "../stores/settingsStore";
+import {
+  useSessionMenuStore,
+  type SessionMenuItem,
+} from "../stores/sessionMenuStore";
 import { useThemeStore, applyThemeToDOM } from "../stores/themeStore";
 import { FAMILIES } from "../themes";
 import type { ShellKind } from "../stores/sessionStore";
@@ -9,6 +13,7 @@ import type { ThemeFamily } from "../themes";
 
 const SHELL_OPTIONS: { value: ShellKind; label: string }[] = [
   { value: "powerShell", label: "PowerShell" },
+  { value: "pwsh", label: "PowerShell 7" },
   { value: "cmd", label: "CMD" },
   { value: "wsl", label: "WSL" },
   { value: "gitBash", label: "Git Bash" },
@@ -264,7 +269,236 @@ function SettingsModal() {
           </button>
         </Row>
       </section>
+
+      <SessionMenuSettings />
     </ModalShell>
+  );
+}
+
+function SessionMenuSettings() {
+  const items = useSessionMenuStore((s) => s.items);
+  const addItem = useSessionMenuStore((s) => s.addItem);
+  const updateItem = useSessionMenuStore((s) => s.updateItem);
+  const removeItem = useSessionMenuStore((s) => s.removeItem);
+  const moveItem = useSessionMenuStore((s) => s.moveItem);
+  const resetItems = useSessionMenuStore((s) => s.resetItems);
+  const shellItems = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.kind === "shell");
+  const codingItems = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.kind === "agent");
+
+  return (
+    <section className="xy-set-section">
+      <div className="xy-set-section-head">
+        <div>
+          <h3 className="xy-set-section-title">会话菜单</h3>
+          <p className="xy-set-section-hint">
+            控制新建会话菜单的显示、排序和启动命令
+          </p>
+        </div>
+        <div className="xy-session-menu-actions">
+          <button
+            className="xy-mini-btn"
+            type="button"
+            title="添加 Shell 会话"
+            onClick={() =>
+              addItem({
+                label: "新 Shell",
+                kind: "shell",
+                shellKind: "powerShell",
+              })
+            }
+          >
+            <Plus size={13} strokeWidth={1.8} />
+            Shell
+          </button>
+          <button
+            className="xy-mini-btn"
+            type="button"
+            title="添加 Coding 会话"
+            onClick={() =>
+              addItem({
+                label: "新 Coding",
+                kind: "agent",
+                shellKind: "powerShell",
+                agentCommand: "codex --yolo",
+              })
+            }
+          >
+            <Plus size={13} strokeWidth={1.8} />
+            Coding
+          </button>
+          <button
+            className="xy-mini-btn"
+            type="button"
+            title="恢复默认菜单"
+            onClick={resetItems}
+          >
+            <RotateCcw size={13} strokeWidth={1.8} />
+            默认
+          </button>
+        </div>
+      </div>
+
+      <div className="xy-session-menu-list">
+        <SessionMenuGroup
+          title="Shell"
+          entries={shellItems}
+          updateItem={updateItem}
+          removeItem={removeItem}
+          moveItem={moveItem}
+        />
+        <SessionMenuGroup
+          title="Coding"
+          entries={codingItems}
+          updateItem={updateItem}
+          removeItem={removeItem}
+          moveItem={moveItem}
+        />
+      </div>
+    </section>
+  );
+}
+
+function SessionMenuGroup({
+  title,
+  entries,
+  updateItem,
+  removeItem,
+  moveItem,
+}: {
+  title: string;
+  entries: Array<{ item: SessionMenuItem; index: number }>;
+  updateItem: (id: string, patch: Partial<SessionMenuItem>) => void;
+  removeItem: (id: string) => void;
+  moveItem: (id: string, direction: "up" | "down") => void;
+}) {
+  return (
+    <div className="xy-session-menu-group">
+      <div className="xy-session-menu-group-title">{title}</div>
+      {entries.length === 0 ? (
+        <div className="xy-session-menu-empty">暂无菜单项</div>
+      ) : (
+        entries.map(({ item }, groupIndex) => (
+          <SessionMenuEditor
+            key={item.id}
+            item={item}
+            groupIndex={groupIndex}
+            groupCount={entries.length}
+            updateItem={updateItem}
+            removeItem={removeItem}
+            moveItem={moveItem}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+function SessionMenuEditor({
+  item,
+  groupIndex,
+  groupCount,
+  updateItem,
+  removeItem,
+  moveItem,
+}: {
+  item: SessionMenuItem;
+  groupIndex: number;
+  groupCount: number;
+  updateItem: (id: string, patch: Partial<SessionMenuItem>) => void;
+  removeItem: (id: string) => void;
+  moveItem: (id: string, direction: "up" | "down") => void;
+}) {
+  return (
+    <div className={`xy-session-menu-card ${!item.visible ? "is-muted" : ""}`}>
+      <div className="xy-session-menu-card-main">
+        <label className="xy-field">
+          <span>名称</span>
+          <input
+            value={item.label}
+            onChange={(e) => updateItem(item.id, { label: e.target.value })}
+          />
+        </label>
+
+        <label className="xy-field">
+          <span>Shell</span>
+          <select
+            value={item.shellKind}
+            onChange={(e) =>
+              updateItem(item.id, { shellKind: e.target.value as ShellKind })
+            }
+          >
+            {SHELL_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {item.kind === "agent" ? (
+          <label className="xy-field xy-field--wide">
+            <span>启动命令</span>
+            <input
+              value={item.agentCommand ?? ""}
+              placeholder="claude / codex --yolo / opencode"
+              onChange={(e) =>
+                updateItem(item.id, { agentCommand: e.target.value })
+              }
+            />
+          </label>
+        ) : (
+          <label className="xy-field xy-field--wide">
+            <span>启动命令</span>
+            <input
+              value={item.startupCommand ?? ""}
+              placeholder="例如: cmd /k /t:0a"
+              onChange={(e) =>
+                updateItem(item.id, { startupCommand: e.target.value })
+              }
+            />
+          </label>
+        )}
+      </div>
+
+      <div className="xy-session-menu-card-tools">
+        <button
+          className={`xy-switch xy-switch--small ${item.visible ? "is-on" : ""}`}
+          role="switch"
+          aria-checked={item.visible}
+          title={item.visible ? "隐藏" : "显示"}
+          onClick={() => updateItem(item.id, { visible: !item.visible })}
+        >
+          <span className="xy-switch-knob" />
+        </button>
+        <button
+          className="xy-icon-btn"
+          title="上移"
+          disabled={groupIndex === 0}
+          onClick={() => moveItem(item.id, "up")}
+        >
+          <ArrowUp size={14} strokeWidth={1.8} />
+        </button>
+        <button
+          className="xy-icon-btn"
+          title="下移"
+          disabled={groupIndex === groupCount - 1}
+          onClick={() => moveItem(item.id, "down")}
+        >
+          <ArrowDown size={14} strokeWidth={1.8} />
+        </button>
+        <button
+          className="xy-icon-btn is-danger"
+          title="删除"
+          onClick={() => removeItem(item.id)}
+        >
+          <Trash2 size={14} strokeWidth={1.8} />
+        </button>
+      </div>
+    </div>
   );
 }
 

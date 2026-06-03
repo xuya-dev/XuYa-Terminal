@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ChevronDown, TerminalSquare } from "lucide-react";
 import ContextMenu from "./ContextMenu";
 import { buildNewSessionItems } from "./newSessionMenu";
+import { useSessionMenuStore } from "../stores/sessionMenuStore";
 
 /**
  * Empty-state shown by Dockview when no panels are open. Mirrors the
@@ -10,7 +11,11 @@ import { buildNewSessionItems } from "./newSessionMenu";
  */
 export default function Watermark(props: IWatermarkPanelProps) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const newSessionItems = buildNewSessionItems(props.containerApi);
+  const sessionMenuItems = useSessionMenuStore((s) => s.items);
+  const newSessionItems = buildNewSessionItems(
+    props.containerApi,
+    sessionMenuItems,
+  );
 
   return (
     <div className="xy-watermark">

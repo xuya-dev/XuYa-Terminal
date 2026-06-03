@@ -1,3 +1,5 @@
+import { getAgentCommandName } from "./agentCommand";
+
 const AGENT_SESSION_KEY = "xuya-agent-sessions";
 
 type AgentSessionMap = Record<string, string>;
@@ -63,7 +65,7 @@ export function forgetAgentSession(panelId: string): void {
 }
 
 export function createAgentSessionId(agentCommand: string | undefined): string | undefined {
-  if (agentCommand !== "claude") return undefined;
+  if (getAgentCommandName(agentCommand) !== "claude") return undefined;
   return globalThis.crypto?.randomUUID?.();
 }
 

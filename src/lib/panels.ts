@@ -20,6 +20,8 @@ interface OpenOpts {
   shellKind?: ShellKind;
   label?: string;
   agentCommand?: string;
+  launchCommand?: string;
+  startupCommand?: string;
   /** Working directory for the new terminal session. */
   cwd?: string;
   /** Place relative to a group (split) or inside it (tab). */
@@ -55,6 +57,8 @@ export function openTerminal(api: DockviewApi, opts: OpenOpts = {}) {
       label,
       agentCommand: opts.agentCommand,
       agentSessionId,
+      launchCommand: opts.launchCommand,
+      startupCommand: opts.startupCommand,
       cwd,
     },
     position: opts.referenceGroup
