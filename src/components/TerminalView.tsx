@@ -67,6 +67,10 @@ export default function TerminalView(
   const sessionIdRef = useRef<string | null>(null);
   const agentCommandRef = useRef<string | undefined>(props.params?.agentCommand);
   const terminalOpenRef = useRef(false);
+  const lastTerminalSizeRef = useRef<{ rows: number; cols: number } | null>(null);
+  const outputCursorRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const outputCursorHiddenRef = useRef(false);
+  const codexCursorVisibleUntilRef = useRef(0);
 
   const shellKind = (props.params?.shellKind ?? "powerShell") as ShellKind;
   const cwd = props.params?.cwd;
@@ -91,6 +95,100 @@ export default function TerminalView(
   const updateSession = useSessionStore((s) => s.update);
   const removeSession = useSessionStore((s) => s.remove);
   const setActive = useSessionStore((s) => s.setActive);
+
+  const hideCodexCursor = useCallback((force = false) => {
+    const term = termRef.current;
+    if (!term || agentCommandRef.current !== "codex") return;
+    if (!force && Date.now() < codexCursorVisibleUntilRef.current) return;
+
+    if (outputCursorRestoreTimerRef.current) {
+      clearTimeout(outputCursorRestoreTimerRef.current);
+      outputCursorRestoreTimerRef.current = null;
+    }
+
+    codexCursorVisibleUntilRef.current = 0;
+    if (outputCursorHiddenRef.current) return;
+
+    outputCursorHiddenRef.current = true;
+    const terminalPalette = useThemeStore.getState().palette.terminal;
+    term.options.cursorBlink = false;
+    term.options.theme = {
+      ...terminalPalette,
+      cursor: "transparent",
+      cursorAccent: "transparent",
+    };
+  }, []);
+
+  const showCodexInputCursorBriefly = useCallback(() => {
+    const term = termRef.current;
+    if (!term || agentCommandRef.current !== "codex") return;
+
+    if (outputCursorRestoreTimerRef.current) {
+      clearTimeout(outputCursorRestoreTimerRef.current);
+      outputCursorRestoreTimerRef.current = null;
+    }
+
+    codexCursorVisibleUntilRef.current = Date.now() + 1200;
+    outputCursorHiddenRef.current = false;
+    term.options.theme = useThemeStore.getState().palette.terminal;
+    term.options.cursorBlink = useSettingsStore.getState().cursorBlink;
+
+    outputCursorRestoreTimerRef.current = setTimeout(() => {
+      outputCursorRestoreTimerRef.current = null;
+      hideCodexCursor(true);
+    }, 1200);
+  }, [hideCodexCursor]);
+
+  const resizePtyIfNeeded = useCallback((term: Terminal) => {
+    const size = { rows: term.rows, cols: term.cols };
+    const last = lastTerminalSizeRef.current;
+    if (last && last.rows === size.rows && last.cols === size.cols) return;
+
+    lastTerminalSizeRef.current = size;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+
+    invoke("pty_resize", {
+      id: sid,
+      rows: size.rows,
+      cols: size.cols,
+    }).catch(() => {});
+  }, []);
+
+  const restoreActiveTerminal = useCallback(
+    (
+      opts: { focus?: boolean; scrollToBottom?: boolean } = {},
+    ) => {
+      const { focus = false, scrollToBottom = true } = opts;
+      const term = termRef.current;
+      const fit = fitAddonRef.current;
+      if (!term || !terminalOpenRef.current) return;
+
+      const fitted = fitTerminal(
+        term,
+        fit,
+        terminalHostRef.current,
+        terminalOpenRef.current,
+      );
+      if (scrollToBottom) {
+        term.scrollToBottom();
+        syncViewportScrollToBottom(terminalHostRef.current);
+      }
+      if (focus) term.focus();
+
+      if (fitted) {
+        resizePtyIfNeeded(term);
+      }
+
+      if (scrollToBottom) {
+        requestAnimationFrame(() => {
+          term.scrollToBottom();
+          syncViewportScrollToBottom(terminalHostRef.current);
+        });
+      }
+    },
+    [resizePtyIfNeeded],
+  );
 
   // Mount xterm + spawn PTY once. Settings are read from the store at
   // mount; live changes are applied by the effects further down.
@@ -184,15 +282,7 @@ export default function TerminalView(
         isOpen && !disposed,
       );
       if (!fitted || !resizePty) return fitted;
-
-      const sid = sessionIdRef.current;
-      if (sid) {
-        invoke("pty_resize", {
-          id: sid,
-          rows: term.rows,
-          cols: term.cols,
-        }).catch(() => {});
-      }
+      resizePtyIfNeeded(term);
       return true;
     };
 
@@ -236,6 +326,7 @@ export default function TerminalView(
         isOpen = true;
         terminalOpenRef.current = true;
         safeFit();
+        hideCodexCursor(true);
         resolveOpenWaiters();
       } catch {
         // xterm can fail while Dockview is still settling panel dimensions.
@@ -377,6 +468,7 @@ export default function TerminalView(
               }
               scheduleAgentReady();
             }
+            hideCodexCursor();
             term.write(bytes);
           } else if (p.type === "Exit") {
             term.writeln(
@@ -400,6 +492,7 @@ export default function TerminalView(
         }
 
         try {
+          lastTerminalSizeRef.current = { rows: term.rows, cols: term.cols };
           id = await invoke("pty_open", {
             spec: {
               id: ptyId,
@@ -454,13 +547,20 @@ export default function TerminalView(
 
       // Wire keyboard input.
       dataDisposable = term.onData((data) => {
+        if (agentCommandRef.current === "codex") {
+          if (/[\r\n]/.test(data)) {
+            hideCodexCursor(true);
+          } else {
+            showCodexInputCursorBriefly();
+          }
+        }
         invoke("pty_write", {
           id,
           data: Array.from(new TextEncoder().encode(data)),
         }).catch(() => {});
       });
 
-      term.focus();
+      if (props.api.isActive) term.focus();
     })();
 
     return () => {
@@ -469,6 +569,10 @@ export default function TerminalView(
       if (openTimer) clearTimeout(openTimer);
       if (agentReadyTimer) clearTimeout(agentReadyTimer);
       if (agentSlowTimer) clearTimeout(agentSlowTimer);
+      if (outputCursorRestoreTimerRef.current) {
+        clearTimeout(outputCursorRestoreTimerRef.current);
+        outputCursorRestoreTimerRef.current = null;
+      }
       openObserver?.disconnect();
       resolveOpenWaiters();
       if (sessionLookupTimer) clearTimeout(sessionLookupTimer);
@@ -489,7 +593,13 @@ export default function TerminalView(
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = palette.terminal;
+    term.options.theme = outputCursorHiddenRef.current
+      ? {
+          ...palette.terminal,
+          cursor: "transparent",
+          cursorAccent: "transparent",
+        }
+      : palette.terminal;
   }, [palette]);
 
   // Live-update font size when zoom changes, then refit + resize PTY.
@@ -505,33 +615,54 @@ export default function TerminalView(
       terminalOpenRef.current,
     );
     if (!fitted) return;
-    const sid = sessionIdRef.current;
-    if (sid) {
-      invoke("pty_resize", {
-        id: sid,
-        rows: term.rows,
-        cols: term.cols,
-      }).catch(() => {});
-    }
-  }, [zoom]);
+    resizePtyIfNeeded(term);
+  }, [zoom, resizePtyIfNeeded]);
 
   // Live-update cursor preferences.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     term.options.cursorStyle = cursorStyle;
-    term.options.cursorBlink = cursorBlink;
+    term.options.cursorBlink = outputCursorHiddenRef.current ? false : cursorBlink;
   }, [cursorStyle, cursorBlink]);
 
   // Mark active when this panel becomes visible/focused.
   useEffect(() => {
     const dispose = props.api.onDidActiveChange((e) => {
-      if (e.isActive) setActive(props.api.id);
+      if (e.isActive) {
+        setActive(props.api.id);
+        requestAnimationFrame(() => restoreActiveTerminal());
+      }
     });
-    if (props.api.isActive) setActive(props.api.id);
+    if (props.api.isActive) {
+      setActive(props.api.id);
+      requestAnimationFrame(() => restoreActiveTerminal());
+    }
     return () => dispose.dispose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [restoreActiveTerminal]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && props.api.isActive) {
+        requestAnimationFrame(() => restoreActiveTerminal());
+      }
+    };
+
+    const handleWindowFocus = () => {
+      if (props.api.isActive) {
+        requestAnimationFrame(() => restoreActiveTerminal());
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreActiveTerminal]);
 
   // Resize handler.
   const handleResize = useCallback(() => {
@@ -544,15 +675,8 @@ export default function TerminalView(
       terminalOpenRef.current,
     );
     if (!term || !fitted) return;
-    const sid = sessionIdRef.current;
-    if (sid) {
-      invoke("pty_resize", {
-        id: sid,
-        rows: term.rows,
-        cols: term.cols,
-      }).catch(() => {});
-    }
-  }, []);
+    resizePtyIfNeeded(term);
+  }, [resizePtyIfNeeded]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -655,7 +779,9 @@ export default function TerminalView(
       ref={containerRef}
       className="xy-terminal-container"
       onClick={() => {
-        if (terminalOpenRef.current) termRef.current?.focus();
+        if (!terminalOpenRef.current) return;
+        termRef.current?.focus();
+        showCodexInputCursorBriefly();
       }}
       onWheel={handleWheel}
     >
@@ -699,6 +825,13 @@ function fitTerminal(
   } catch {
     return false;
   }
+}
+
+function syncViewportScrollToBottom(container: HTMLElement | null): void {
+  const viewport = container?.querySelector<HTMLElement>(".xterm-viewport");
+  if (!viewport) return;
+
+  viewport.scrollTop = viewport.scrollHeight;
 }
 
 function hasAgentStartupError(text: string): boolean {

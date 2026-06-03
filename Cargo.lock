@@ -4764,7 +4764,7 @@ dependencies = [
 
 [[package]]
 name = "xuya-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4772,7 +4772,7 @@ dependencies = [
 
 [[package]]
 name = "xuya-pty"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "log",
@@ -4784,7 +4784,7 @@ dependencies = [
 
 [[package]]
 name = "xuya-terminal"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "dashmap",
