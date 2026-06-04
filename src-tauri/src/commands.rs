@@ -834,10 +834,9 @@ fn apply_codex_provider_config(
         (prefix, Some(base_url), Some(endpoint), Some(api_key))
     };
 
-    let mut next = full_config.unwrap_or_else(|| {
-        let preserved = strip_codex_managed_config(&current);
-        merge_codex_config(generated_config, String::new(), preserved)
-    });
+    let preserved_source = full_config.as_deref().unwrap_or(&current);
+    let preserved = strip_codex_managed_config(preserved_source);
+    let mut next = merge_codex_config(generated_config, String::new(), preserved);
     if let Some(api_key) = api_key {
         let token_provider_id =
             extract_top_level_toml_string(&next, "model_provider").unwrap_or(codex_provider_id);
@@ -2054,7 +2053,7 @@ fn strip_codex_managed_config(text: &str) -> String {
 
         if let Some(header) = parse_toml_section_header(trimmed) {
             section = Some(header.clone());
-            skipping_managed_section = is_xuya_codex_provider_section(&header);
+            skipping_managed_section = is_codex_provider_section(&header);
         }
 
         if skipping_managed_section {
@@ -2085,13 +2084,8 @@ fn merge_codex_config(prefix: String, extra_config: String, preserved: String) -
     format!("{}\n", blocks.join("\n\n"))
 }
 
-fn is_xuya_codex_provider_section(section: &str) -> bool {
-    section
-        .strip_prefix("model_providers.")
-        .is_some_and(|provider| {
-            provider == XUYA_CODEX_PROVIDER_ID
-                || provider.starts_with(&format!("{XUYA_CODEX_PROVIDER_ID}_"))
-        })
+fn is_codex_provider_section(section: &str) -> bool {
+    section == "model_providers" || section.starts_with("model_providers.")
 }
 
 fn is_codex_managed_top_level_key(key: &str) -> bool {

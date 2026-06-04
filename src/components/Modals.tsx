@@ -685,11 +685,8 @@ function extractCodexConfigApiKey(config: string) {
   );
 }
 
-function isXuyaCodexProviderSection(section: string) {
-  const prefix = "model_providers.";
-  if (!section.startsWith(prefix)) return false;
-  const provider = section.slice(prefix.length);
-  return provider === "xuya_custom" || provider.startsWith("xuya_custom_");
+function isCodexProviderSection(section: string) {
+  return section === "model_providers" || section.startsWith("model_providers.");
 }
 
 function stripCodexManagedConfig(text: string) {
@@ -715,7 +712,7 @@ function stripCodexManagedConfig(text: string) {
     const header = parseTomlSectionHeader(trimmed);
     if (header) {
       section = header;
-      skippingManagedSection = isXuyaCodexProviderSection(header);
+      skippingManagedSection = isCodexProviderSection(header);
     }
     if (skippingManagedSection) continue;
     if (!section && CODEX_MANAGED_TOP_LEVEL_KEYS.has(tomlLineKey(trimmed) ?? "")) {
