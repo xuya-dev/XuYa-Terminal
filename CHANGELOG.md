@@ -2,6 +2,26 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [0.1.5] - 2026-06-04
+
+### ✨ AI 代理商与额度查询 (AI Providers & Quota)
+- 底部状态栏新增 Claude Code / Codex 代理商切换器，仅在对应 Agent 会话中展示，并按当前工具过滤可用代理商。
+- 状态栏支持展示代理商余额、剩余额度、已用额度和周限制额度，并每分钟自动刷新一次。
+- 内置代理商支持自动识别额度接口，覆盖 Kimi、智谱 GLM、MiniMax、DeepSeek、XiaoMi Mimo、Sub2API、New API 等常用返回结构。
+- 自定义代理商的额度查询改为手动选择接口类型，默认不查询；New API 可额外配置 Access Token 与用户 ID。
+- 代理商下拉列表新增厂商图标与选中标记，状态栏目录支持点击打开当前工作目录。
+
+### 🐛 终端与切换体验 (Terminal UX)
+- 切换 Claude Code / Codex 代理商后，仅重启当前 Agent 标签页的 PTY 并重新运行原命令，避免整体刷新应用。
+- 修复底部运行时间变化导致状态栏后续数据抖动的问题。
+- 修复 Codex diff 背景未对齐的问题，优化终端 resize 与初始 fit 时机。
+- 额度文案在没有已用数据时仅展示剩余额度，避免出现 `用 —`。
+
+### 🔧 AI 配置默认值 (AI Config Defaults)
+- 更新 XiaoMi Mimo 默认端点为 `https://token-plan-cn.xiaomimimo.com/anthropic`。
+- 更新 Kimi 默认端点为 `https://api.kimi.com/coding`。
+- Claude 内置代理商的兜底模型默认改为空，旧版本保存的内置默认兜底模型会自动视为空值。
+
 ## [0.1.4] - 2026-06-04
 
 ### 🎨 主题精修与视觉效果提升 (Theme & UI Enhancements)
