@@ -68,7 +68,7 @@ const CURSOR_OPTIONS: { value: CursorStyle; label: string }[] = [
 ];
 
 const PROJECT_REPOSITORY_URL = "https://github.com/xuya-dev/XuYa-Terminal";
-const APP_VERSION = "0.1.3";
+const APP_VERSION = "0.1.4";
 
 type UpdateStatus =
   | "idle"
