@@ -2000,16 +2000,23 @@ body,
   color: var(--xy-fg);
 }
 
-.xy-provider-dot {
-  width: 8px;
-  height: 8px;
+.xy-provider-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--xy-provider-color);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--xy-provider-color) 15%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--xy-provider-color) 9%, var(--xy-surface));
+  color: var(--xy-provider-color);
 }
 
-.xy-agent-provider span:last-child {
+.xy-provider-icon svg {
+  display: block;
+}
+
+.xy-provider-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

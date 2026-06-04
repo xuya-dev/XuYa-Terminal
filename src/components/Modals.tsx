@@ -2,7 +2,18 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-shell";
-import { ClaudeCode, Codex } from "@lobehub/icons";
+import {
+  Anthropic,
+  ClaudeCode,
+  Codex,
+  DeepSeek,
+  Kimi,
+  Minimax,
+  NewAPI,
+  OpenAI,
+  XiaomiMiMo,
+  Zhipu,
+} from "@lobehub/icons";
 import {
   useEffect,
   useCallback,
@@ -87,6 +98,7 @@ interface AgentProviderOption {
   baseUrl: string;
   model?: string;
   color: string;
+  icon: ReactNode;
 }
 
 interface AgentDraft {
@@ -130,6 +142,7 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     label: "官方",
     baseUrl: "",
     color: "#D4915D",
+    icon: <Anthropic size={14} />,
   },
   {
     id: "zhipu",
@@ -137,6 +150,7 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     model: "glm-5.1",
     color: "#0F62FE",
+    icon: <Zhipu size={14} />,
   },
   {
     id: "minimax",
@@ -144,6 +158,7 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     baseUrl: "https://api.minimaxi.com/anthropic",
     model: "MiniMax-M2.7",
     color: "#FF6B6B",
+    icon: <Minimax size={14} />,
   },
   {
     id: "kimi",
@@ -151,6 +166,7 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     baseUrl: "https://api.moonshot.cn/anthropic",
     model: "kimi-k2.6",
     color: "#6366F1",
+    icon: <Kimi size={14} />,
   },
   {
     id: "deepseek",
@@ -158,6 +174,7 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     baseUrl: "https://api.deepseek.com/anthropic",
     model: "deepseek-v4-pro",
     color: "#1E88E5",
+    icon: <DeepSeek size={14} />,
   },
   {
     id: "xiaomimimo",
@@ -165,12 +182,14 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     baseUrl: "https://api.xiaomimimo.com/anthropic",
     model: "mimo-v2.5-pro",
     color: "#FF6900",
+    icon: <XiaomiMiMo size={14} />,
   },
   {
     id: "custom",
     label: "自定义",
     baseUrl: "",
     color: "#64748B",
+    icon: <NewAPI size={14} />,
   },
 ];
 
@@ -181,6 +200,7 @@ const CODEX_PROVIDER_OPTIONS: AgentProviderOption[] = [
     baseUrl: "",
     model: "gpt-5-codex",
     color: "#00A67E",
+    icon: <OpenAI size={14} />,
   },
   {
     id: "custom",
@@ -188,6 +208,7 @@ const CODEX_PROVIDER_OPTIONS: AgentProviderOption[] = [
     baseUrl: "",
     model: "gpt-5-codex",
     color: "#64748B",
+    icon: <NewAPI size={14} />,
   },
 ];
 
@@ -817,8 +838,8 @@ function AgentConfigCard({
               }
               onClick={() => handleProviderChange(provider.id)}
             >
-              <span className="xy-provider-dot" />
-              <span>{provider.label}</span>
+              <span className="xy-provider-icon">{provider.icon}</span>
+              <span className="xy-provider-label">{provider.label}</span>
             </button>
           );
         })}
