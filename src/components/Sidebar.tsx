@@ -3,7 +3,6 @@ import { ClaudeCode, Codex, OpenCode } from "@lobehub/icons";
 import {
   Plus,
   Settings,
-  Palette,
   Info,
   TerminalSquare,
   SquareTerminal,
@@ -169,14 +168,6 @@ export default function Sidebar({ api }: Props) {
         >
           <Settings size={14} strokeWidth={1.6} />
           <span>设置</span>
-        </button>
-        <button
-          className="xy-sidebar-foot-btn"
-          title="主题"
-          onClick={() => openModal("settings", "appearance")}
-        >
-          <Palette size={14} strokeWidth={1.6} />
-          <span>主题</span>
         </button>
         <button
           className="xy-sidebar-foot-btn"
