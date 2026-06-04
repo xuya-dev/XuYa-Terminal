@@ -2252,6 +2252,17 @@ body,
   min-height: calc(10 * 1.45em + 16px);
 }
 
+.xy-agent-config-editor--auth {
+  min-height: calc(6 * 1.45em + 16px);
+}
+
+.xy-agent-config-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .xy-agent-detail-switch {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

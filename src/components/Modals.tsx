@@ -114,6 +114,7 @@ interface AgentDraft {
   sonnetModel: string;
   opusModel: string;
   extraConfig: string;
+  authConfig: string;
 }
 
 interface AgentCustomProviderSummary {
@@ -141,6 +142,9 @@ interface AgentToolConfigState {
   sonnetModel?: string | null;
   opusModel?: string | null;
   extraConfig?: string | null;
+  authPath?: string | null;
+  authExists: boolean;
+  authConfig?: string | null;
   apiKey?: string | null;
   tokenConfigured: boolean;
   customProviders: AgentCustomProviderSummary[];
@@ -457,7 +461,8 @@ function buildClaudeFullConfig(draft: AgentDraft, baseConfig?: string) {
 
   if (!usesOfficial && draft.baseUrl.trim()) {
     env.ANTHROPIC_BASE_URL = normalizeClaudeBaseUrlForPreview(draft.baseUrl);
-    env.ANTHROPIC_AUTH_TOKEN = CLAUDE_TOKEN_PLACEHOLDER;
+    env.ANTHROPIC_AUTH_TOKEN =
+      draft.apiKey.trim() || CLAUDE_TOKEN_PLACEHOLDER;
   }
   if (draft.model.trim()) env.ANTHROPIC_MODEL = draft.model.trim();
   if (draft.haikuModel.trim()) {
@@ -477,6 +482,18 @@ function buildClaudeFullConfig(draft: AgentDraft, baseConfig?: string) {
     delete next.env;
   }
   return JSON.stringify(next, null, 2);
+}
+
+function buildCodexAuthConfig(draft: AgentDraft, baseConfig?: string) {
+  const provider = findProvider("codex", draft.providerId);
+  const usesOfficial = !isCustomProviderId(draft.providerId) && provider.id === "official";
+  const config = tryParseObjectConfig(baseConfig ?? draft.authConfig);
+  if (!usesOfficial) {
+    config.OPENAI_API_KEY = draft.apiKey.trim() || CODEX_TOKEN_PLACEHOLDER;
+  } else if (draft.apiKey.trim()) {
+    config.OPENAI_API_KEY = draft.apiKey.trim();
+  }
+  return JSON.stringify(config, null, 2);
 }
 
 function parseTomlSectionHeader(line: string) {
@@ -557,6 +574,32 @@ function inferCodexCustomName(extraConfig?: string | null) {
   );
 }
 
+function extractCodexAuthApiKey(authConfig: string) {
+  try {
+    const parsed = JSON.parse(authConfig) as Record<string, unknown>;
+    return typeof parsed.OPENAI_API_KEY === "string"
+      ? parsed.OPENAI_API_KEY.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractCodexConfigApiKey(config: string) {
+  const provider = extractTopLevelTomlString(config, "model_provider");
+  const providerToken = provider
+    ? extractCodexProviderTomlString(
+        config,
+        provider,
+        "experimental_bearer_token",
+      )
+    : undefined;
+  return (
+    providerToken ??
+    extractTopLevelTomlString(config, "experimental_bearer_token")
+  );
+}
+
 function isXuyaCodexProviderSection(section: string) {
   const prefix = "model_providers.";
   if (!section.startsWith(prefix)) return false;
@@ -629,7 +672,7 @@ disable_response_storage = true
 name = ${tomlString(providerName)}
 base_url = ${tomlString(baseUrl)}
 wire_api = "responses"
-experimental_bearer_token = ${tomlString(CODEX_TOKEN_PLACEHOLDER)}`,
+experimental_bearer_token = ${tomlString(draft.apiKey.trim() || CODEX_TOKEN_PLACEHOLDER)}`,
     preserved,
   );
 }
@@ -646,6 +689,12 @@ function draftWithFullConfig(tool: AgentTool, draft: AgentDraft) {
     extraConfig: draft.extraConfig.trim()
       ? draft.extraConfig
       : buildAgentFullConfig(tool, draft),
+    authConfig:
+      tool === "codex"
+        ? draft.authConfig.trim()
+          ? draft.authConfig
+          : buildCodexAuthConfig(draft)
+        : draft.authConfig,
   };
 }
 
@@ -684,6 +733,24 @@ function sanitizeFullConfigForStorage(tool: AgentTool, value: string) {
   );
 }
 
+function sanitizeCodexAuthConfigForStorage(value: string) {
+  const text = value.trim() ? value : "";
+  if (!text) return text;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (typeof parsed.OPENAI_API_KEY === "string" && parsed.OPENAI_API_KEY.trim()) {
+      parsed.OPENAI_API_KEY = CODEX_TOKEN_PLACEHOLDER;
+    }
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return text.replace(
+      /("OPENAI_API_KEY"\s*:\s*")([^"]*)(")/g,
+      (_match, prefix: string, _token: string, suffix: string) =>
+        `${prefix}${CODEX_TOKEN_PLACEHOLDER}${suffix}`,
+    );
+  }
+}
+
 function defaultAgentDraft(tool: AgentTool): AgentDraft {
   const provider = providerOptionsFor(tool)[0];
   const draft = {
@@ -696,10 +763,12 @@ function defaultAgentDraft(tool: AgentTool): AgentDraft {
     sonnetModel: roleModelFallback(provider, "sonnet"),
     opusModel: roleModelFallback(provider, "opus"),
     extraConfig: "",
+    authConfig: "",
   };
   return {
     ...draft,
     extraConfig: buildAgentFullConfig(tool, draft, ""),
+    authConfig: tool === "codex" ? buildCodexAuthConfig(draft, "") : "",
   };
 }
 
@@ -744,12 +813,22 @@ function loadAgentDraft(tool: AgentTool): AgentDraft {
         typeof parsed.extraConfig === "string"
           ? sanitizeFullConfigForStorage(tool, parsed.extraConfig)
           : "",
+      authConfig:
+        typeof parsed.authConfig === "string"
+          ? sanitizeCodexAuthConfigForStorage(parsed.authConfig)
+          : "",
     };
     return {
       ...draft,
       extraConfig: draft.extraConfig.trim()
         ? draft.extraConfig
         : buildAgentFullConfig(tool, draft, ""),
+      authConfig:
+        tool === "codex"
+          ? draft.authConfig.trim()
+            ? draft.authConfig
+            : buildCodexAuthConfig(draft, "")
+          : "",
     };
   } catch {
     return fallback;
@@ -768,6 +847,10 @@ function persistAgentDraft(tool: AgentTool, draft: AgentDraft) {
       sonnetModel: draft.sonnetModel,
       opusModel: draft.opusModel,
       extraConfig: sanitizeFullConfigForStorage(tool, draft.extraConfig),
+      authConfig:
+        tool === "codex"
+          ? sanitizeCodexAuthConfigForStorage(draft.authConfig)
+          : "",
     }),
   );
 }
@@ -881,14 +964,33 @@ function draftFromConfigState(
           current.opusModel
         : current.opusModel,
     extraConfig:
-      customProvider?.extraConfig ?? config.extraConfig ?? current.extraConfig,
+      config.extraConfig ?? customProvider?.extraConfig ?? current.extraConfig,
+    authConfig:
+      tool === "codex"
+        ? config.authConfig ??
+          buildCodexAuthConfig(
+            { ...current, apiKey: customProvider?.apiKey ?? config.apiKey ?? "" },
+            current.authConfig,
+          )
+        : "",
   };
+
+  const extraConfig = next.extraConfig.trim()
+    ? next.extraConfig
+    : buildAgentFullConfig(tool, next, current.extraConfig);
 
   return {
     ...next,
-    extraConfig: next.extraConfig.trim()
-      ? next.extraConfig
-      : buildAgentFullConfig(tool, next, current.extraConfig),
+    extraConfig:
+      tool === "codex" && next.apiKey.trim()
+        ? buildCodexFullConfig(next, extraConfig)
+        : extraConfig,
+    authConfig:
+      tool === "codex"
+        ? next.authConfig.trim()
+          ? next.authConfig
+          : buildCodexAuthConfig(next, current.authConfig)
+        : "",
   };
 }
 
@@ -1210,6 +1312,7 @@ function AgentConfigSettings() {
             sonnetModel: draftToSave.sonnetModel,
             opusModel: draftToSave.opusModel,
             extraConfig: draftToSave.extraConfig,
+            authConfig: draftToSave.authConfig,
           },
         },
       );
@@ -1222,7 +1325,30 @@ function AgentConfigSettings() {
         haikuModel: saved.haikuModel ?? "",
         sonnetModel: saved.sonnetModel ?? "",
         opusModel: saved.opusModel ?? "",
-        extraConfig: saved.extraConfig ?? "",
+        extraConfig: buildAgentFullConfig(
+          tool,
+          {
+            ...draftToSave,
+            providerId: customProviderSelector(saved.id),
+            customName: saved.name,
+            baseUrl: saved.baseUrl,
+            apiKey: saved.apiKey ?? draftToSave.apiKey,
+            model: saved.model ?? defaultCustomModel(tool),
+            haikuModel: saved.haikuModel ?? "",
+            sonnetModel: saved.sonnetModel ?? "",
+            opusModel: saved.opusModel ?? "",
+            extraConfig: "",
+            authConfig: draftToSave.authConfig,
+          },
+          saved.extraConfig ?? draftToSave.extraConfig,
+        ),
+        authConfig:
+          tool === "codex"
+            ? buildCodexAuthConfig(
+                { ...draftToSave, apiKey: saved.apiKey ?? draftToSave.apiKey },
+                draftToSave.authConfig,
+              )
+            : "",
       });
       await loadState();
       if (!options.silent) {
@@ -1297,7 +1423,30 @@ function AgentConfigSettings() {
           haikuModel: saved.haikuModel ?? "",
           sonnetModel: saved.sonnetModel ?? "",
           opusModel: saved.opusModel ?? "",
-          extraConfig: saved.extraConfig ?? "",
+          extraConfig: buildAgentFullConfig(
+            tool,
+            {
+              ...nextDraft,
+              providerId: customProviderSelector(saved.id),
+              customName: saved.name,
+              baseUrl: saved.baseUrl,
+              apiKey: saved.apiKey ?? nextDraft.apiKey,
+              model: saved.model ?? defaultCustomModel(tool),
+              haikuModel: saved.haikuModel ?? "",
+              sonnetModel: saved.sonnetModel ?? "",
+              opusModel: saved.opusModel ?? "",
+              extraConfig: "",
+              authConfig: nextDraft.authConfig,
+            },
+            saved.extraConfig ?? nextDraft.extraConfig,
+          ),
+          authConfig:
+            tool === "codex"
+              ? buildCodexAuthConfig(
+                  { ...nextDraft, apiKey: saved.apiKey ?? nextDraft.apiKey },
+                  nextDraft.authConfig,
+                )
+              : "",
         };
         provider = findProvider(tool, nextDraft.providerId);
       }
@@ -1339,6 +1488,7 @@ function AgentConfigSettings() {
             sonnetModel: nextDraft.sonnetModel,
             opusModel: nextDraft.opusModel,
             extraConfig: nextDraft.extraConfig,
+            authConfig: nextDraft.authConfig,
           },
         },
       );
@@ -1540,6 +1690,19 @@ function AgentConfigCard({
   const selectedCustom = findCustomProvider(draft.providerId, customProviders);
   const builtInProviders = providers.filter((provider) => provider.id !== "custom");
   const endpoint = endpointPreview(tool, draft.baseUrl);
+  const fileLabel =
+    tool === "codex"
+      ? [
+          state?.authPath ? basenamePath(state.authPath) : "auth.json 未读取",
+          state?.path ? basenamePath(state.path) : "config.toml 未读取",
+        ].join(" / ")
+      : state?.path
+        ? basenamePath(state.path)
+        : "未读取";
+  const fileTitle =
+    tool === "codex"
+      ? [state?.authPath, state?.path].filter(Boolean).join("\n")
+      : state?.path ?? undefined;
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<AgentFetchedModel[]>([]);
   const [modelFetchMessage, setModelFetchMessage] =
@@ -1555,10 +1718,13 @@ function AgentConfigCard({
     const syncFullConfig = options.syncFullConfig ?? true;
     const next = { ...draft, ...patch };
     const configAffecting = Object.keys(patch).some(
-      (key) => key !== "apiKey" && key !== "extraConfig",
+      (key) => key !== "extraConfig" && key !== "authConfig",
     );
     if (syncFullConfig && configAffecting) {
       next.extraConfig = buildAgentFullConfig(tool, next, draft.extraConfig);
+      if (tool === "codex") {
+        next.authConfig = buildCodexAuthConfig(next, draft.authConfig);
+      }
     }
     onDraftChange(next);
   };
@@ -1597,7 +1763,7 @@ function AgentConfigCard({
   const handleCustomSelect = (provider: AgentCustomProviderSummary) => {
     setFetchedModels([]);
     setModelFetchMessage(null);
-    onDraftChange({
+    const nextDraft = {
       ...draft,
       providerId: customProviderSelector(provider.id),
       customName: provider.name,
@@ -1607,20 +1773,20 @@ function AgentConfigCard({
       haikuModel: provider.haikuModel ?? "",
       sonnetModel: provider.sonnetModel ?? "",
       opusModel: provider.opusModel ?? "",
-      extraConfig:
-        provider.extraConfig ??
-        buildAgentFullConfig(tool, {
-          ...draft,
-          providerId: customProviderSelector(provider.id),
-          customName: provider.name,
-          baseUrl: provider.baseUrl,
-          apiKey: provider.apiKey ?? "",
-          model: provider.model ?? defaultCustomModel(tool),
-          haikuModel: provider.haikuModel ?? "",
-          sonnetModel: provider.sonnetModel ?? "",
-          opusModel: provider.opusModel ?? "",
-          extraConfig: "",
-        }),
+      extraConfig: "",
+      authConfig: draft.authConfig,
+    };
+    onDraftChange({
+      ...nextDraft,
+      authConfig:
+        tool === "codex"
+          ? buildCodexAuthConfig(nextDraft, draft.authConfig)
+          : "",
+      extraConfig: buildAgentFullConfig(
+        tool,
+        nextDraft,
+        provider.extraConfig ?? draft.extraConfig,
+      ),
     });
   };
 
@@ -1820,14 +1986,14 @@ function AgentConfigCard({
           <input
             value={draft.apiKey}
             disabled={usesOfficial}
-            type="password"
+            type="text"
             placeholder={
               usesCustom
                 ? selectedCustom?.tokenConfigured
-                  ? "已保存，留空不显示"
+                  ? "已保存，读取后明文显示"
                   : "sk-..."
                 : state?.tokenConfigured
-                  ? "已配置，留空不显示"
+                  ? "已配置，读取后明文显示"
                   : "sk-..."
             }
             onChange={(e) => updateDraft({ apiKey: e.target.value })}
@@ -1996,58 +2162,126 @@ function AgentConfigCard({
           </div>
         )}
 
-        {activeDetail === "config" && (
-          <div className="xy-field xy-field--wide">
-            <div className="xy-field-head">
-              <span>
-                {tool === "claude" ? "完整 settings.json" : "完整 config.toml"}
-              </span>
-              <button
-                className="xy-mini-btn xy-mini-btn--compact"
-                type="button"
-                title="同步表单到完整配置"
-                onClick={() =>
+        {activeDetail === "config" &&
+          (tool === "codex" ? (
+            <div className="xy-agent-config-stack xy-field--wide">
+              <div className="xy-field-head">
+                <span>Codex 完整配置</span>
+                <button
+                  className="xy-mini-btn xy-mini-btn--compact"
+                  type="button"
+                  title="同步表单到 auth.json 与 config.toml"
+                  onClick={() =>
+                    updateDraft(
+                      {
+                        authConfig: buildCodexAuthConfig(
+                          draft,
+                          draft.authConfig,
+                        ),
+                        extraConfig: buildCodexFullConfig(
+                          draft,
+                          draft.extraConfig,
+                        ),
+                      },
+                      { syncFullConfig: false },
+                    )
+                  }
+                >
+                  <RefreshCw size={12} strokeWidth={1.8} />
+                  同步表单
+                </button>
+              </div>
+
+              <label className="xy-field">
+                <span title={state?.authPath ?? undefined}>
+                  完整 auth.json
+                </span>
+                <textarea
+                  className="xy-agent-config-editor xy-agent-config-editor--auth"
+                  value={draft.authConfig}
+                  rows={6}
+                  spellCheck={false}
+                  placeholder={`{\n  "OPENAI_API_KEY": "${draft.apiKey.trim() || "sk-..."}"\n}`}
+                  onChange={(e) => {
+                    const authConfig = e.target.value;
+                    const apiKey = extractCodexAuthApiKey(authConfig);
+                    updateDraft(
+                      apiKey === undefined
+                        ? { authConfig }
+                        : { authConfig, apiKey },
+                      { syncFullConfig: false },
+                    );
+                  }}
+                />
+              </label>
+
+              <label className="xy-field">
+                <span title={state?.path}>完整 config.toml</span>
+                <textarea
+                  className="xy-agent-config-editor"
+                  value={draft.extraConfig}
+                  rows={10}
+                  spellCheck={false}
+                  placeholder={`model_provider = "xuya_custom_new-api"\nmodel = "${CODEX_DEFAULT_MODEL}"\nmodel_reasoning_effort = "high"\ndisable_response_storage = true\n\n[model_providers.xuya_custom_new-api]\nname = "new-api"\nbase_url = "https://api.example.com/v1"\nwire_api = "responses"\nexperimental_bearer_token = "${draft.apiKey.trim() || "sk-..."}"`}
+                  onChange={(e) => {
+                    const extraConfig = e.target.value;
+                    const apiKey = extractCodexConfigApiKey(extraConfig);
+                    updateDraft(
+                      apiKey === undefined
+                        ? { extraConfig }
+                        : { extraConfig, apiKey },
+                      { syncFullConfig: false },
+                    );
+                  }}
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="xy-field xy-field--wide">
+              <div className="xy-field-head">
+                <span>完整 settings.json</span>
+                <button
+                  className="xy-mini-btn xy-mini-btn--compact"
+                  type="button"
+                  title="同步表单到完整配置"
+                  onClick={() =>
+                    updateDraft(
+                      {
+                        extraConfig: buildAgentFullConfig(
+                          tool,
+                          draft,
+                          draft.extraConfig,
+                        ),
+                      },
+                      { syncFullConfig: false },
+                    )
+                  }
+                >
+                  <RefreshCw size={12} strokeWidth={1.8} />
+                  同步表单
+                </button>
+              </div>
+              <textarea
+                className="xy-agent-config-editor"
+                value={draft.extraConfig}
+                rows={10}
+                spellCheck={false}
+                placeholder={`{\n  "env": {\n    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",\n    "ANTHROPIC_AUTH_TOKEN": "${draft.apiKey.trim() || "sk-ant-..."}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash"\n  }\n}`}
+                onChange={(e) =>
                   updateDraft(
-                    {
-                      extraConfig: buildAgentFullConfig(
-                        tool,
-                        draft,
-                        draft.extraConfig,
-                      ),
-                    },
+                    { extraConfig: e.target.value },
                     { syncFullConfig: false },
                   )
                 }
-              >
-                <RefreshCw size={12} strokeWidth={1.8} />
-                同步表单
-              </button>
+              />
             </div>
-            <textarea
-              className="xy-agent-config-editor"
-              value={draft.extraConfig}
-              rows={10}
-              spellCheck={false}
-              placeholder={
-                tool === "claude"
-                  ? '{\n  "env": {\n    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",\n    "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash"\n  }\n}'
-                  : `model_provider = "xuya_custom_new-api"\nmodel = "${CODEX_DEFAULT_MODEL}"\nmodel_reasoning_effort = "high"\ndisable_response_storage = true\n\n[model_providers.xuya_custom_new-api]\nname = "new-api"\nbase_url = "https://api.example.com/v1"\nwire_api = "responses"\nexperimental_bearer_token = "${CODEX_TOKEN_PLACEHOLDER}"`
-              }
-              onChange={(e) =>
-                updateDraft(
-                  { extraConfig: e.target.value },
-                  { syncFullConfig: false },
-                )
-              }
-            />
-          </div>
-        )}
+          ))}
       </div>
 
       <div className="xy-agent-card-foot">
         <div className="xy-agent-meta">
-          <span title={state?.path}>
-            文件 {state?.path ? basenamePath(state.path) : "未读取"}
+          <span title={fileTitle}>
+            文件 {fileLabel}
           </span>
           <span title={state?.endpoint ?? undefined}>
             端点 {usesOfficial ? "官方登录" : endpoint || "待填写"}

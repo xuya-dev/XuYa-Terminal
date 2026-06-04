@@ -79,6 +79,7 @@ pub struct AgentProviderConfigRequest {
     sonnet_model: Option<String>,
     opus_model: Option<String>,
     extra_config: Option<String>,
+    auth_config: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,6 +161,9 @@ pub struct AgentToolConfigState {
     sonnet_model: Option<String>,
     opus_model: Option<String>,
     extra_config: Option<String>,
+    auth_path: Option<String>,
+    auth_exists: bool,
+    auth_config: Option<String>,
     api_key: Option<String>,
     token_configured: bool,
     custom_providers: Vec<AgentCustomProviderSummary>,
@@ -380,12 +384,13 @@ fn read_agent_config_state() -> Result<AgentConfigState, String> {
     let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
     let claude_path = claude_settings_path(&home);
     let codex_path = codex_config_path(&home);
+    let codex_auth_file_path = codex_auth_path(&home);
     let claude_store = read_custom_provider_store(&home, "claude")?;
     let codex_store = read_custom_provider_store(&home, "codex")?;
 
     Ok(AgentConfigState {
         claude: read_claude_config_state(&claude_path, &claude_store.providers),
-        codex: read_codex_config_state(&codex_path, &codex_store.providers),
+        codex: read_codex_config_state(&codex_path, &codex_auth_file_path, &codex_store.providers),
     })
 }
 
@@ -654,6 +659,7 @@ fn apply_codex_provider_config(
     request: AgentProviderConfigRequest,
 ) -> Result<AgentConfigApplyResult, String> {
     let path = codex_config_path(home);
+    let auth_path = codex_auth_path(home);
     let provider_id = request.provider_id.trim().to_string();
     if provider_id.is_empty() {
         return Err("Provider is required".to_string());
@@ -677,7 +683,15 @@ fn apply_codex_provider_config(
                     .flatten()
             })
         });
+    let provided_auth_config = clean_optional_text(request.auth_config.as_deref())
+        .map(|config| parse_codex_auth_config(&config))
+        .transpose()?;
+    let provided_auth_api_key = provided_auth_config
+        .as_ref()
+        .and_then(extract_codex_auth_api_key);
     let current = fs::read_to_string(&path).unwrap_or_default();
+    let current_auth = read_json_or_empty_object(&auth_path)?;
+    let current_auth_api_key = extract_codex_auth_api_key(&current_auth);
     let current_provider = extract_top_level_toml_string(&current, "model_provider");
     let existing_api_key = clean_codex_token(current_provider.as_deref().and_then(|provider| {
         extract_codex_provider_string(&current, provider, "experimental_bearer_token")
@@ -694,6 +708,8 @@ fn apply_codex_provider_config(
             .as_ref()
             .and_then(|provider| clean_codex_token(Some(provider.api_key.clone())))
     })
+    .or_else(|| provided_auth_api_key.clone())
+    .or_else(|| current_auth_api_key.clone())
     .or_else(|| {
         clean_codex_token(extract_top_level_toml_string(
             &current,
@@ -768,6 +784,45 @@ fn apply_codex_provider_config(
         next.push('\n');
     }
     write_text_atomic(&path, &next)?;
+
+    let auth_to_write = if provider_id == "official" {
+        provided_auth_config
+    } else {
+        let api_key = clean_optional_text(request.api_key.as_deref())
+            .or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+            })
+            .or(provided_auth_api_key)
+            .or(current_auth_api_key)
+            .or_else(|| {
+                extract_top_level_toml_string(&next, "model_provider")
+                    .as_deref()
+                    .and_then(|provider| {
+                        clean_codex_token(extract_codex_provider_string(
+                            &next,
+                            provider,
+                            "experimental_bearer_token",
+                        ))
+                    })
+            })
+            .or_else(|| {
+                clean_codex_token(extract_top_level_toml_string(
+                    &next,
+                    "experimental_bearer_token",
+                ))
+            });
+        api_key.map(|api_key| {
+            let mut auth = provided_auth_config.unwrap_or(current_auth);
+            ensure_json_object(&mut auth)
+                .insert("OPENAI_API_KEY".to_string(), Value::String(api_key));
+            auth
+        })
+    };
+    if let Some(auth) = auth_to_write {
+        write_json_pretty_atomic(&auth_path, &auth)?;
+    }
 
     Ok(AgentConfigApplyResult {
         tool: "codex".to_string(),
@@ -972,6 +1027,10 @@ fn claude_settings_path(home: &Path) -> PathBuf {
 
 fn codex_config_path(home: &Path) -> PathBuf {
     home.join(".codex").join("config.toml")
+}
+
+fn codex_auth_path(home: &Path) -> PathBuf {
+    home.join(".codex").join("auth.json")
 }
 
 fn claude_providers_path(home: &Path) -> PathBuf {
@@ -1245,8 +1304,8 @@ fn normalize_full_config(tool: &str, full_config: Option<&str>) -> Result<Option
         return Ok(None);
     };
     match tool {
-        "claude" => sanitize_claude_full_config(&full_config).map(Some),
-        "codex" => Ok(Some(sanitize_codex_full_config(&full_config))),
+        "claude" => stringify_claude_config(parse_claude_full_config(&full_config)?).map(Some),
+        "codex" => Ok(Some(full_config)),
         other => Err(format!("Unsupported agent config target: {other}")),
     }
 }
@@ -1263,27 +1322,7 @@ fn parse_claude_full_config(full_config: &str) -> Result<Value, String> {
     Ok(value)
 }
 
-fn sanitize_claude_full_config(full_config: &str) -> Result<String, String> {
-    let value = parse_claude_full_config(full_config)?;
-    stringify_sanitized_claude_config(value)
-}
-
-fn stringify_sanitized_claude_config(mut value: Value) -> Result<String, String> {
-    if let Some(env) = value.get_mut("env").and_then(Value::as_object_mut) {
-        for key in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
-            if env
-                .get(key)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .is_some_and(|token| !token.is_empty())
-            {
-                env.insert(
-                    key.to_string(),
-                    Value::String(CLAUDE_TOKEN_PLACEHOLDER.to_string()),
-                );
-            }
-        }
-    }
+fn stringify_claude_config(value: Value) -> Result<String, String> {
     serde_json::to_string_pretty(&value)
         .map_err(|e| format!("Failed to serialize Claude config: {e}"))
 }
@@ -1300,6 +1339,28 @@ fn extract_claude_api_key(settings: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != CLAUDE_TOKEN_PLACEHOLDER)
         .map(str::to_string)
+}
+
+fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
+    auth.get("OPENAI_API_KEY")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != CODEX_TOKEN_PLACEHOLDER)
+        .map(str::to_string)
+}
+
+fn parse_codex_auth_config(auth_config: &str) -> Result<Value, String> {
+    let value = serde_json::from_str::<Value>(auth_config)
+        .map_err(|e| format!("Codex auth.json must be a JSON object: {e}"))?;
+    if !value.is_object() {
+        return Err("Codex auth.json must be a JSON object".to_string());
+    }
+    Ok(value)
+}
+
+fn stringify_codex_auth_config(value: Value) -> Result<String, String> {
+    serde_json::to_string_pretty(&value)
+        .map_err(|e| format!("Failed to serialize Codex auth.json: {e}"))
 }
 
 fn is_real_token(value: &str, placeholder: &str) -> bool {
@@ -1319,17 +1380,21 @@ fn current_agent_api_key(home: &Path, tool: &str, custom_id: Option<&str>) -> Op
             .ok()
             .and_then(|settings| extract_claude_api_key(&settings)),
         "codex" => {
-            let current = fs::read_to_string(codex_config_path(home)).ok()?;
+            let current = fs::read_to_string(codex_config_path(home)).unwrap_or_default();
+            let auth_key = read_json_or_empty_object(&codex_auth_path(home))
+                .ok()
+                .and_then(|auth| extract_codex_auth_api_key(&auth));
             let current_provider = extract_top_level_toml_string(&current, "model_provider");
             let target_provider = custom_id.map(codex_custom_provider_id);
-            target_provider
-                .as_deref()
-                .and_then(|provider| {
-                    clean_codex_token(extract_codex_provider_string(
-                        &current,
-                        provider,
-                        "experimental_bearer_token",
-                    ))
+            auth_key
+                .or_else(|| {
+                    target_provider.as_deref().and_then(|provider| {
+                        clean_codex_token(extract_codex_provider_string(
+                            &current,
+                            provider,
+                            "experimental_bearer_token",
+                        ))
+                    })
                 })
                 .or_else(|| {
                     current_provider.as_deref().and_then(|provider| {
@@ -1466,28 +1531,6 @@ fn ends_with_version_segment(url: &str) -> bool {
     let last = url.rsplit('/').next().unwrap_or("");
     last.strip_prefix('v')
         .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-}
-
-fn sanitize_codex_full_config(full_config: &str) -> String {
-    full_config
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            if toml_line_key(trimmed).is_some_and(|key| key == "experimental_bearer_token") {
-                let indent = line
-                    .chars()
-                    .take_while(|ch| ch.is_whitespace())
-                    .collect::<String>();
-                format!(
-                    "{indent}experimental_bearer_token = {}",
-                    toml_string(CODEX_TOKEN_PLACEHOLDER)
-                )
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn set_codex_provider_token(text: &str, provider_id: &str, api_key: &str) -> String {
@@ -1667,7 +1710,7 @@ fn read_claude_config_state(
         None
     };
     let endpoint = base_url.as_deref().map(claude_messages_endpoint);
-    let extra_config = settings.and_then(|value| stringify_sanitized_claude_config(value).ok());
+    let extra_config = settings.and_then(|value| stringify_claude_config(value).ok());
 
     AgentToolConfigState {
         path: path_to_string(path),
@@ -1680,6 +1723,9 @@ fn read_claude_config_state(
         sonnet_model,
         opus_model,
         extra_config,
+        auth_path: None,
+        auth_exists: false,
+        auth_config: None,
         api_key,
         token_configured,
         custom_providers: custom_provider_summaries("claude", custom_providers),
@@ -1688,10 +1734,18 @@ fn read_claude_config_state(
 
 fn read_codex_config_state(
     path: &Path,
+    auth_path: &Path,
     custom_providers: &[AgentCustomProvider],
 ) -> AgentToolConfigState {
     let exists = path.exists();
     let text = fs::read_to_string(path).unwrap_or_default();
+    let auth_exists = auth_path.exists();
+    let auth_text = fs::read_to_string(auth_path).unwrap_or_default();
+    let auth = if auth_text.trim().is_empty() {
+        Value::Object(Map::new())
+    } else {
+        serde_json::from_str::<Value>(&auth_text).unwrap_or_else(|_| Value::Object(Map::new()))
+    };
     let active_config_provider = extract_top_level_toml_string(&text, "model_provider");
     let model = extract_top_level_toml_string(&text, "model");
     let base_url = active_config_provider
@@ -1712,6 +1766,7 @@ fn read_codex_config_state(
                 "experimental_bearer_token",
             ))
         });
+    let api_key = extract_codex_auth_api_key(&auth).or(api_key);
     let token_configured = api_key.is_some();
     let endpoint = base_url.as_deref().map(codex_responses_endpoint);
     let active_provider = active_config_provider.as_deref().map(|provider| {
@@ -1728,7 +1783,7 @@ fn read_codex_config_state(
                 .unwrap_or_else(|| "custom".to_string())
         }
     });
-    let extra_config = clean_optional_text(Some(sanitize_codex_full_config(&text).as_str()));
+    let extra_config = clean_optional_text(Some(text.as_str()));
 
     AgentToolConfigState {
         path: path_to_string(path),
@@ -1741,6 +1796,10 @@ fn read_codex_config_state(
         sonnet_model: None,
         opus_model: None,
         extra_config,
+        auth_path: Some(path_to_string(auth_path)),
+        auth_exists,
+        auth_config: clean_optional_text(Some(auth_text.as_str()))
+            .or_else(|| stringify_codex_auth_config(auth).ok()),
         api_key,
         token_configured,
         custom_providers: custom_provider_summaries("codex", custom_providers),
