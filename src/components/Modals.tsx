@@ -1606,8 +1606,8 @@ function AgentConfigSettings() {
             onDeleteCustom={(providerId) =>
               void deleteCustomProvider("claude", providerId)
             }
-            onApply={() =>
-              void applyConfig("claude", claudeDraft, state?.claude)
+            onApply={(nextDraft) =>
+              void applyConfig("claude", nextDraft ?? claudeDraft, state?.claude)
             }
           />
         ) : (
@@ -1629,7 +1629,9 @@ function AgentConfigSettings() {
             onDeleteCustom={(providerId) =>
               void deleteCustomProvider("codex", providerId)
             }
-            onApply={() => void applyConfig("codex", codexDraft, state?.codex)}
+            onApply={(nextDraft) =>
+              void applyConfig("codex", nextDraft ?? codexDraft, state?.codex)
+            }
           />
         )}
       </div>
@@ -1683,7 +1685,7 @@ function AgentConfigCard({
   onSaveCustom: () => void;
   onLoadCurrent: () => void;
   onDeleteCustom: (providerId: string) => void;
-  onApply: () => void;
+  onApply: (draftOverride?: AgentDraft) => void;
 }) {
   const activeProvider = findProvider(tool, draft.providerId);
   const usesCustom = isCustomProviderId(draft.providerId);
@@ -1719,6 +1721,8 @@ function AgentConfigCard({
     : hasModelFetchApiKey
       ? "根据当前 KEY 获取模型列表"
       : "请先填写 API Key";
+  const showReadCurrentAction = draft.providerId === "custom";
+  const showSaveCustomAction = usesCustom;
 
   const updateDraft = (
     patch: Partial<AgentDraft>,
@@ -1876,6 +1880,136 @@ function AgentConfigCard({
     void handleFetchModels();
   };
 
+  const handleReadCurrent = () => {
+    setActiveDetail("config");
+    onLoadCurrent();
+  };
+
+  const buildBuiltInProviderDraft = (provider: AgentProviderOption) => {
+    if (!usesCustom && provider.id === activeProvider.id) return draft;
+    const nextDraft = {
+      ...draft,
+      providerId: provider.id,
+      customName: "",
+      baseUrl: provider.baseUrl,
+      apiKey: "",
+      model: provider.model ?? draft.model,
+      haikuModel: roleModelFallback(provider, "haiku"),
+      sonnetModel: roleModelFallback(provider, "sonnet"),
+      opusModel: roleModelFallback(provider, "opus"),
+    };
+    return {
+      ...nextDraft,
+      extraConfig: buildAgentFullConfig(tool, nextDraft, draft.extraConfig),
+      authConfig:
+        tool === "codex"
+          ? buildCodexAuthConfig(nextDraft, draft.authConfig)
+          : "",
+    };
+  };
+
+  const buildSavedCustomProviderDraft = (
+    provider: AgentCustomProviderSummary,
+  ) => {
+    const providerId = customProviderSelector(provider.id);
+    if (providerId === draft.providerId) return draft;
+    const nextDraft = {
+      ...draft,
+      providerId,
+      customName: provider.name,
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey ?? "",
+      model: provider.model ?? defaultCustomModel(tool),
+      haikuModel: provider.haikuModel ?? "",
+      sonnetModel: provider.sonnetModel ?? "",
+      opusModel: provider.opusModel ?? "",
+      extraConfig: "",
+      authConfig: draft.authConfig,
+    };
+    return {
+      ...nextDraft,
+      authConfig:
+        tool === "codex"
+          ? buildCodexAuthConfig(nextDraft, draft.authConfig)
+          : "",
+      extraConfig: buildAgentFullConfig(
+        tool,
+        nextDraft,
+        provider.extraConfig ?? draft.extraConfig,
+      ),
+    };
+  };
+
+  const buildNewCustomProviderDraft = () => {
+    if (draft.providerId === "custom") return draft;
+    const nextDraft = {
+      ...draft,
+      providerId: "custom",
+      customName: "",
+      baseUrl: "",
+      apiKey: "",
+      model: defaultCustomModel(tool),
+      haikuModel: "",
+      sonnetModel: "",
+      opusModel: "",
+    };
+    return {
+      ...nextDraft,
+      extraConfig: buildAgentFullConfig(tool, nextDraft, draft.extraConfig),
+      authConfig:
+        tool === "codex"
+          ? buildCodexAuthConfig(nextDraft, draft.authConfig)
+          : "",
+    };
+  };
+
+  const hasApplyKey = (
+    targetDraft: AgentDraft,
+    tokenConfigured = false,
+  ) => targetDraft.apiKey.trim().length > 0 || tokenConfigured;
+
+  const handleProviderApply = (targetDraft: AgentDraft) => {
+    onDraftChange(targetDraft);
+    onApply(targetDraft);
+  };
+
+  const renderProviderApplyAction = ({
+    targetDraft,
+    tokenConfigured = false,
+    hasDelete = false,
+  }: {
+    targetDraft: AgentDraft;
+    tokenConfigured?: boolean;
+    hasDelete?: boolean;
+  }) => (
+    <div
+      className={`xy-agent-provider-hover-actions ${
+        hasDelete ? "has-delete" : ""
+      }`}
+    >
+      <button
+        className="xy-agent-provider-action is-accent"
+        type="button"
+        disabled={applying || saving || !hasApplyKey(targetDraft, tokenConfigured)}
+        title={
+          hasApplyKey(targetDraft, tokenConfigured)
+            ? "应用当前厂商配置"
+            : "请先填写 API Key"
+        }
+        onClick={() => handleProviderApply(targetDraft)}
+      >
+        {applying ? (
+          <Loader2 className="xy-spin" size={12} strokeWidth={1.8} />
+        ) : (
+          <Save size={12} strokeWidth={1.8} />
+        )}
+        应用
+      </button>
+    </div>
+  );
+
+  const newCustomDraft = buildNewCustomProviderDraft();
+
   return (
     <div className="xy-agent-card">
       <div className="xy-agent-card-head">
@@ -1890,26 +2024,35 @@ function AgentConfigCard({
       <div className="xy-agent-provider-grid">
         {builtInProviders.map((provider) => {
           const isActive = !usesCustom && provider.id === activeProvider.id;
+          const targetDraft = buildBuiltInProviderDraft(provider);
           return (
-            <button
+            <div
               key={provider.id}
-              className={`xy-agent-provider ${isActive ? "is-active" : ""}`}
-              type="button"
+              className={`xy-agent-provider xy-agent-provider--builtin ${
+                isActive ? "is-active" : ""
+              }`}
               style={
                 {
                   "--xy-provider-color": provider.color,
                 } as CSSProperties
               }
-              onClick={() => handleProviderChange(provider.id)}
             >
-              <span className="xy-provider-icon">{provider.icon}</span>
-              <span className="xy-provider-label">{provider.label}</span>
-            </button>
+              <button
+                className="xy-agent-provider-main xy-agent-provider-main--builtin"
+                type="button"
+                onClick={() => handleProviderChange(provider.id)}
+              >
+                <span className="xy-provider-icon">{provider.icon}</span>
+                <span className="xy-provider-label">{provider.label}</span>
+              </button>
+              {renderProviderApplyAction({ targetDraft })}
+            </div>
           );
         })}
         {customProviders.map((provider) => {
           const providerId = customProviderSelector(provider.id);
           const isActive = providerId === draft.providerId;
+          const targetDraft = buildSavedCustomProviderDraft(provider);
           return (
             <div
               key={provider.id}
@@ -1951,26 +2094,36 @@ function AgentConfigCard({
               >
                 <Trash2 size={12} strokeWidth={1.8} />
               </button>
+              {renderProviderApplyAction({
+                targetDraft,
+                tokenConfigured: provider.tokenConfigured,
+                hasDelete: true,
+              })}
             </div>
           );
         })}
-        <button
+        <div
           className={`xy-agent-provider xy-agent-provider--new ${
             draft.providerId === "custom" ? "is-active" : ""
           }`}
-          type="button"
           style={
             {
               "--xy-provider-color": "#64748B",
             } as CSSProperties
           }
-          onClick={handleNewCustom}
         >
-          <span className="xy-provider-icon">
-            <Plus size={14} strokeWidth={1.8} />
-          </span>
-          <span className="xy-provider-label">新增自定义</span>
-        </button>
+          <button
+            className="xy-agent-provider-main xy-agent-provider-main--builtin"
+            type="button"
+            onClick={handleNewCustom}
+          >
+            <span className="xy-provider-icon">
+              <Plus size={14} strokeWidth={1.8} />
+            </span>
+            <span className="xy-provider-label">新增自定义</span>
+          </button>
+          {renderProviderApplyAction({ targetDraft: newCustomDraft })}
+        </div>
       </div>
 
       <div className="xy-agent-fields">
@@ -2335,52 +2488,40 @@ function AgentConfigCard({
             端点 {usesOfficial ? "官方登录" : endpoint || "待填写"}
           </span>
         </div>
-        <div className="xy-agent-actions">
-          <button
-            className="xy-mini-btn"
-            type="button"
-            disabled={reading || saving || applying}
-            onClick={() => {
-              setActiveDetail("config");
-              onLoadCurrent();
-            }}
-          >
-            {reading ? (
-              <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
-            ) : (
-              <RefreshCw size={13} strokeWidth={1.8} />
+        {(showReadCurrentAction || showSaveCustomAction) && (
+          <div className="xy-agent-actions">
+            {showReadCurrentAction && (
+              <button
+                className="xy-mini-btn"
+                type="button"
+                disabled={reading || saving || applying}
+                onClick={handleReadCurrent}
+              >
+                {reading ? (
+                  <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
+                ) : (
+                  <RefreshCw size={13} strokeWidth={1.8} />
+                )}
+                读取当前
+              </button>
             )}
-            读取当前
-          </button>
-          {usesCustom && (
-            <button
-              className="xy-mini-btn"
-              type="button"
-              disabled={saving || applying}
-              onClick={onSaveCustom}
-            >
-              {saving ? (
-                <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
-              ) : (
-                <Save size={13} strokeWidth={1.8} />
-              )}
-              保存厂商
-            </button>
-          )}
-          <button
-            className="xy-mini-btn xy-mini-btn--accent"
-            type="button"
-            disabled={applying || saving}
-            onClick={onApply}
-          >
-            {applying ? (
-              <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
-            ) : (
-              <Save size={13} strokeWidth={1.8} />
+            {showSaveCustomAction && (
+              <button
+                className="xy-mini-btn"
+                type="button"
+                disabled={saving || applying}
+                onClick={onSaveCustom}
+              >
+                {saving ? (
+                  <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
+                ) : (
+                  <Save size={13} strokeWidth={1.8} />
+                )}
+                保存
+              </button>
             )}
-            应用
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
