@@ -15,6 +15,7 @@ use xuya_core::{PtyChunk, SessionSpec};
 use xuya_pty::PtySession;
 
 const XUYA_CODEX_PROVIDER_ID: &str = "xuya_custom";
+const CUSTOM_PROVIDER_SELECTOR_PREFIX: &str = "custom:";
 
 const CLAUDE_MANAGED_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
@@ -58,6 +59,45 @@ pub struct AgentProviderConfigRequest {
     model: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCustomProviderSaveRequest {
+    tool: String,
+    provider_id: Option<String>,
+    name: String,
+    base_url: String,
+    api_key: Option<String>,
+    model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentCustomProvider {
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: String,
+    model: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentCustomProviderStore {
+    #[serde(default)]
+    providers: Vec<AgentCustomProvider>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCustomProviderSummary {
+    id: String,
+    name: String,
+    base_url: String,
+    endpoint: String,
+    model: Option<String>,
+    token_configured: bool,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolConfigState {
@@ -68,6 +108,7 @@ pub struct AgentToolConfigState {
     endpoint: Option<String>,
     model: Option<String>,
     token_configured: bool,
+    custom_providers: Vec<AgentCustomProviderSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,14 +274,35 @@ pub async fn apply_agent_provider_config(
         .map_err(|e| format!("Agent config update failed: {e}"))?
 }
 
+#[tauri::command]
+pub async fn save_agent_custom_provider(
+    request: AgentCustomProviderSaveRequest,
+) -> Result<AgentCustomProviderSummary, String> {
+    tokio::task::spawn_blocking(move || save_agent_custom_provider_inner(request))
+        .await
+        .map_err(|e| format!("Custom provider save failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn delete_agent_custom_provider(
+    tool: String,
+    provider_id: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || delete_agent_custom_provider_inner(&tool, &provider_id))
+        .await
+        .map_err(|e| format!("Custom provider delete failed: {e}"))?
+}
+
 fn read_agent_config_state() -> Result<AgentConfigState, String> {
     let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
     let claude_path = claude_settings_path(&home);
     let codex_path = codex_config_path(&home);
+    let claude_store = read_custom_provider_store(&claude_providers_path(&home))?;
+    let codex_store = read_custom_provider_store(&codex_providers_path(&home))?;
 
     Ok(AgentConfigState {
-        claude: read_claude_config_state(&claude_path),
-        codex: read_codex_config_state(&codex_path),
+        claude: read_claude_config_state(&claude_path, &claude_store.providers),
+        codex: read_codex_config_state(&codex_path, &codex_store.providers),
     })
 }
 
@@ -255,6 +317,69 @@ fn apply_agent_provider_config_inner(
     }
 }
 
+fn save_agent_custom_provider_inner(
+    request: AgentCustomProviderSaveRequest,
+) -> Result<AgentCustomProviderSummary, String> {
+    let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
+    let tool = parse_agent_tool(&request.tool)?;
+    let path = custom_provider_store_path(&home, tool);
+    let mut store = read_custom_provider_store(&path)?;
+    let name = clean_optional_text(Some(request.name.as_str()))
+        .ok_or_else(|| "Custom provider name is required".to_string())?;
+    let base_url = normalize_agent_base_url(tool, &request.base_url)?;
+    let requested_id = request
+        .provider_id
+        .as_deref()
+        .and_then(custom_provider_id_from_selector)
+        .or_else(|| clean_optional_text(request.provider_id.as_deref()));
+    let existing_index = requested_id
+        .as_deref()
+        .and_then(|id| store.providers.iter().position(|provider| provider.id == id));
+    let existing_api_key = existing_index
+        .and_then(|index| clean_optional_text(Some(store.providers[index].api_key.as_str())));
+    let api_key = clean_optional_text(request.api_key.as_deref())
+        .or(existing_api_key)
+        .ok_or_else(|| "API Key is required for custom providers".to_string())?;
+    let model = normalize_agent_model(tool, request.model.as_deref());
+    let id = requested_id.unwrap_or_else(|| unique_custom_provider_id(&store.providers, &name));
+
+    let provider = AgentCustomProvider {
+        id: id.clone(),
+        name,
+        base_url,
+        api_key,
+        model,
+    };
+
+    if let Some(index) = store
+        .providers
+        .iter()
+        .position(|stored| stored.id == provider.id)
+    {
+        store.providers[index] = provider.clone();
+    } else {
+        store.providers.push(provider.clone());
+    }
+
+    write_custom_provider_store(&path, &store)?;
+    summarize_custom_provider(tool, &provider)
+}
+
+fn delete_agent_custom_provider_inner(tool: &str, provider_id: &str) -> Result<(), String> {
+    let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
+    let tool = parse_agent_tool(tool)?;
+    let path = custom_provider_store_path(&home, tool);
+    let mut store = read_custom_provider_store(&path)?;
+    let target_id = custom_provider_id_from_selector(provider_id)
+        .or_else(|| clean_optional_text(Some(provider_id)))
+        .ok_or_else(|| "Custom provider id is required".to_string())?;
+
+    store
+        .providers
+        .retain(|provider| provider.id != target_id);
+    write_custom_provider_store(&path, &store)
+}
+
 fn apply_claude_provider_config(
     home: &Path,
     request: AgentProviderConfigRequest,
@@ -264,6 +389,16 @@ fn apply_claude_provider_config(
     if provider_id.is_empty() {
         return Err("Provider is required".to_string());
     }
+    let custom_store = read_custom_provider_store(&claude_providers_path(home))?;
+    let custom_id = custom_provider_id_from_selector(&provider_id);
+    let stored_custom = custom_id
+        .as_deref()
+        .and_then(|id| find_custom_provider(&custom_store.providers, id))
+        .cloned();
+    let result_provider_id = custom_id
+        .as_deref()
+        .map(|id| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}"))
+        .unwrap_or_else(|| provider_id.clone());
 
     let mut settings = read_json_or_empty_object(&path)?;
     let root = ensure_json_object(&mut settings);
@@ -291,13 +426,17 @@ fn apply_claude_provider_config(
     let (base_url, endpoint) = if provider_id == "official" {
         (None, None)
     } else {
-        let base_url = normalize_claude_base_url(
-            request
-                .base_url
-                .as_deref()
-                .ok_or_else(|| "Claude base URL is required".to_string())?,
-        )?;
+        let raw_base_url = clean_optional_text(request.base_url.as_deref())
+            .or_else(|| stored_custom.as_ref().map(|provider| provider.base_url.clone()))
+            .or_else(|| claude_known_provider_base_url(&provider_id).map(str::to_string))
+            .ok_or_else(|| "Claude base URL is required".to_string())?;
+        let base_url = normalize_claude_base_url(&raw_base_url)?;
         let api_key = clean_optional_text(request.api_key.as_deref())
+            .or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+            })
             .or(existing_api_key)
             .ok_or_else(|| "Claude API Key is required".to_string())?;
         env.insert(
@@ -306,7 +445,12 @@ fn apply_claude_provider_config(
         );
         env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), Value::String(api_key));
 
-        if let Some(model) = clean_optional_text(request.model.as_deref()) {
+        let model = clean_optional_text(request.model.as_deref()).or_else(|| {
+            stored_custom
+                .as_ref()
+                .and_then(|provider| provider.model.clone())
+        });
+        if let Some(model) = model {
             env.insert("ANTHROPIC_MODEL".to_string(), Value::String(model.clone()));
             env.insert(
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
@@ -330,7 +474,7 @@ fn apply_claude_provider_config(
 
     Ok(AgentConfigApplyResult {
         tool: "claude".to_string(),
-        provider_id,
+        provider_id: result_provider_id,
         path: path_to_string(&path),
         base_url,
         endpoint,
@@ -347,16 +491,39 @@ fn apply_codex_provider_config(
         return Err("Provider is required".to_string());
     }
 
+    let custom_store = read_custom_provider_store(&codex_providers_path(home))?;
+    let custom_id = custom_provider_id_from_selector(&provider_id);
+    let stored_custom = custom_id
+        .as_deref()
+        .and_then(|id| find_custom_provider(&custom_store.providers, id))
+        .cloned();
+    let result_provider_id = custom_id
+        .as_deref()
+        .map(|id| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}"))
+        .unwrap_or_else(|| provider_id.clone());
     let current = fs::read_to_string(&path).unwrap_or_default();
-    let existing_api_key = extract_codex_provider_string(
-        &current,
-        XUYA_CODEX_PROVIDER_ID,
-        "experimental_bearer_token",
-    )
-    .or_else(|| extract_top_level_toml_string(&current, "experimental_bearer_token"));
+    let current_provider = extract_top_level_toml_string(&current, "model_provider");
+    let existing_api_key = current_provider
+        .as_deref()
+        .and_then(|provider| {
+            extract_codex_provider_string(&current, provider, "experimental_bearer_token")
+        })
+        .or_else(|| {
+            extract_codex_provider_string(
+                &current,
+                XUYA_CODEX_PROVIDER_ID,
+                "experimental_bearer_token",
+            )
+        })
+        .or_else(|| extract_top_level_toml_string(&current, "experimental_bearer_token"));
     let preserved = strip_codex_managed_config(&current);
-    let model =
-        clean_optional_text(request.model.as_deref()).unwrap_or_else(|| "gpt-5-codex".to_string());
+    let model = clean_optional_text(request.model.as_deref())
+        .or_else(|| {
+            stored_custom
+                .as_ref()
+                .and_then(|provider| provider.model.clone())
+        })
+        .unwrap_or_else(|| "gpt-5-codex".to_string());
 
     let (prefix, base_url, endpoint) = if provider_id == "official" {
         (
@@ -368,21 +535,33 @@ fn apply_codex_provider_config(
             None,
         )
     } else {
-        let base_url = normalize_codex_base_url(
-            request
-                .base_url
-                .as_deref()
-                .ok_or_else(|| "Codex base URL is required".to_string())?,
-        )?;
+        let raw_base_url = clean_optional_text(request.base_url.as_deref())
+            .or_else(|| stored_custom.as_ref().map(|provider| provider.base_url.clone()))
+            .ok_or_else(|| "Codex base URL is required".to_string())?;
+        let base_url = normalize_codex_base_url(&raw_base_url)?;
         let api_key = clean_optional_text(request.api_key.as_deref())
+            .or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+            })
             .or(existing_api_key)
             .ok_or_else(|| "Codex API Key is required".to_string())?;
+        let codex_provider_id = custom_id
+            .as_deref()
+            .map(codex_custom_provider_id)
+            .unwrap_or_else(|| XUYA_CODEX_PROVIDER_ID.to_string());
+        let provider_name = stored_custom
+            .as_ref()
+            .map(|provider| provider.name.as_str())
+            .unwrap_or("XuYa Custom");
         let prefix = format!(
-            "# Managed by XuYa Terminal.\nmodel_provider = \"{provider_id}\"\nmodel = {}\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.{provider_id}]\nname = \"XuYa Custom\"\nbase_url = {}\nwire_api = \"responses\"\nexperimental_bearer_token = {}\n",
+            "# Managed by XuYa Terminal.\nmodel_provider = \"{provider_id}\"\nmodel = {}\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.{provider_id}]\nname = {}\nbase_url = {}\nwire_api = \"responses\"\nexperimental_bearer_token = {}\n",
             toml_string(&model),
+            toml_string(provider_name),
             toml_string(&base_url),
             toml_string(&api_key),
-            provider_id = XUYA_CODEX_PROVIDER_ID,
+            provider_id = codex_provider_id,
         );
         let endpoint = codex_responses_endpoint(&base_url);
         (prefix, Some(base_url), Some(endpoint))
@@ -393,7 +572,7 @@ fn apply_codex_provider_config(
 
     Ok(AgentConfigApplyResult {
         tool: "codex".to_string(),
-        provider_id,
+        provider_id: result_provider_id,
         path: path_to_string(&path),
         base_url,
         endpoint,
@@ -596,6 +775,186 @@ fn codex_config_path(home: &Path) -> PathBuf {
     home.join(".codex").join("config.toml")
 }
 
+fn claude_providers_path(home: &Path) -> PathBuf {
+    home.join(".claude").join("xuya-providers.json")
+}
+
+fn codex_providers_path(home: &Path) -> PathBuf {
+    home.join(".codex").join("xuya-providers.json")
+}
+
+fn custom_provider_store_path(home: &Path, tool: &str) -> PathBuf {
+    match tool {
+        "claude" => claude_providers_path(home),
+        "codex" => codex_providers_path(home),
+        _ => home.join(".xuya").join("xuya-providers.json"),
+    }
+}
+
+fn parse_agent_tool(tool: &str) -> Result<&'static str, String> {
+    match tool.trim() {
+        "claude" => Ok("claude"),
+        "codex" => Ok("codex"),
+        other => Err(format!("Unsupported agent config target: {other}")),
+    }
+}
+
+fn read_custom_provider_store(path: &Path) -> Result<AgentCustomProviderStore, String> {
+    if !path.exists() {
+        return Ok(AgentCustomProviderStore::default());
+    }
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(AgentCustomProviderStore::default());
+    }
+    serde_json::from_str(&text).map_err(|e| format!("Failed to parse {}: {e}", path.display()))
+}
+
+fn write_custom_provider_store(
+    path: &Path,
+    store: &AgentCustomProviderStore,
+) -> Result<(), String> {
+    let value = serde_json::to_value(store)
+        .map_err(|e| format!("Failed to serialize custom providers: {e}"))?;
+    write_json_pretty_atomic(path, &value)
+}
+
+fn summarize_custom_provider(
+    tool: &str,
+    provider: &AgentCustomProvider,
+) -> Result<AgentCustomProviderSummary, String> {
+    let base_url = normalize_agent_base_url(tool, &provider.base_url)?;
+    let endpoint = match tool {
+        "claude" => claude_messages_endpoint(&base_url),
+        "codex" => codex_responses_endpoint(&base_url),
+        _ => return Err(format!("Unsupported agent config target: {tool}")),
+    };
+
+    Ok(AgentCustomProviderSummary {
+        id: provider.id.clone(),
+        name: provider.name.clone(),
+        base_url,
+        endpoint,
+        model: provider.model.clone(),
+        token_configured: !provider.api_key.trim().is_empty(),
+    })
+}
+
+fn custom_provider_summaries(
+    tool: &str,
+    providers: &[AgentCustomProvider],
+) -> Vec<AgentCustomProviderSummary> {
+    providers
+        .iter()
+        .filter_map(|provider| summarize_custom_provider(tool, provider).ok())
+        .collect()
+}
+
+fn find_custom_provider<'a>(
+    providers: &'a [AgentCustomProvider],
+    id: &str,
+) -> Option<&'a AgentCustomProvider> {
+    providers.iter().find(|provider| provider.id == id)
+}
+
+fn custom_provider_selector_by_base_url(
+    tool: &str,
+    base_url: &str,
+    providers: &[AgentCustomProvider],
+) -> Option<String> {
+    let normalized = normalize_agent_base_url(tool, base_url).ok()?;
+    providers
+        .iter()
+        .find(|provider| {
+            normalize_agent_base_url(tool, &provider.base_url)
+                .map(|value| value.eq_ignore_ascii_case(&normalized))
+                .unwrap_or(false)
+        })
+        .map(|provider| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{}", provider.id))
+}
+
+fn custom_provider_id_from_selector(provider_id: &str) -> Option<String> {
+    provider_id
+        .trim()
+        .strip_prefix(CUSTOM_PROVIDER_SELECTOR_PREFIX)
+        .and_then(|value| clean_optional_text(Some(value)))
+}
+
+fn normalize_agent_base_url(tool: &str, value: &str) -> Result<String, String> {
+    match tool {
+        "claude" => normalize_claude_base_url(value),
+        "codex" => normalize_codex_base_url(value),
+        other => Err(format!("Unsupported agent config target: {other}")),
+    }
+}
+
+fn normalize_agent_model(tool: &str, model: Option<&str>) -> Option<String> {
+    clean_optional_text(model).or_else(|| {
+        if tool == "codex" {
+            Some("gpt-5-codex".to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn claude_known_provider_base_url(provider_id: &str) -> Option<&'static str> {
+    CLAUDE_KNOWN_PROVIDERS
+        .iter()
+        .find(|(id, _)| *id == provider_id)
+        .map(|(_, url)| *url)
+}
+
+fn unique_custom_provider_id(providers: &[AgentCustomProvider], name: &str) -> String {
+    let base = slugify_custom_provider_id(name);
+    let base = if base.is_empty() {
+        "custom".to_string()
+    } else {
+        base
+    };
+    let mut candidate = base.clone();
+    let mut index = 2;
+    while providers.iter().any(|provider| provider.id == candidate) {
+        candidate = format!("{base}-{index}");
+        index += 1;
+    }
+    candidate
+}
+
+fn slugify_custom_provider_id(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_dash = false;
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            output.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            output.push('-');
+            last_dash = true;
+        }
+    }
+    output.trim_matches('-').to_string()
+}
+
+fn codex_custom_provider_id(custom_id: &str) -> String {
+    let id = slugify_custom_provider_id(custom_id);
+    if id.is_empty() {
+        XUYA_CODEX_PROVIDER_ID.to_string()
+    } else {
+        format!("{XUYA_CODEX_PROVIDER_ID}_{id}")
+    }
+}
+
+fn custom_provider_id_from_codex_provider_id(provider_id: &str) -> Option<String> {
+    if provider_id == XUYA_CODEX_PROVIDER_ID {
+        return None;
+    }
+    provider_id
+        .strip_prefix(&format!("{XUYA_CODEX_PROVIDER_ID}_"))
+        .and_then(|value| clean_optional_text(Some(value)))
+}
+
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -616,7 +975,10 @@ fn claude_project_key(path: &str) -> String {
         .collect()
 }
 
-fn read_claude_config_state(path: &Path) -> AgentToolConfigState {
+fn read_claude_config_state(
+    path: &Path,
+    custom_providers: &[AgentCustomProvider],
+) -> AgentToolConfigState {
     let exists = path.exists();
     let settings = fs::read_to_string(path)
         .ok()
@@ -647,8 +1009,9 @@ fn read_claude_config_state(path: &Path) -> AgentToolConfigState {
     let active_provider = if let Some(base_url) = base_url.as_deref() {
         Some(
             known_claude_provider_id(base_url)
-                .unwrap_or("custom")
-                .to_string(),
+                .map(str::to_string)
+                .or_else(|| custom_provider_selector_by_base_url("claude", base_url, custom_providers))
+                .unwrap_or_else(|| "custom".to_string()),
         )
     } else if token_configured {
         Some("custom".to_string())
@@ -667,18 +1030,22 @@ fn read_claude_config_state(path: &Path) -> AgentToolConfigState {
         endpoint,
         model,
         token_configured,
+        custom_providers: custom_provider_summaries("claude", custom_providers),
     }
 }
 
-fn read_codex_config_state(path: &Path) -> AgentToolConfigState {
+fn read_codex_config_state(
+    path: &Path,
+    custom_providers: &[AgentCustomProvider],
+) -> AgentToolConfigState {
     let exists = path.exists();
     let text = fs::read_to_string(path).unwrap_or_default();
-    let active_provider = extract_top_level_toml_string(&text, "model_provider");
+    let active_config_provider = extract_top_level_toml_string(&text, "model_provider");
     let model = extract_top_level_toml_string(&text, "model");
-    let base_url = active_provider
+    let base_url = active_config_provider
         .as_deref()
         .and_then(|provider| extract_codex_provider_string(&text, provider, "base_url"));
-    let token_configured = active_provider
+    let token_configured = active_config_provider
         .as_deref()
         .and_then(|provider| {
             extract_codex_provider_string(&text, provider, "experimental_bearer_token")
@@ -687,6 +1054,20 @@ fn read_codex_config_state(path: &Path) -> AgentToolConfigState {
         .as_deref()
         .is_some_and(|value| !value.trim().is_empty());
     let endpoint = base_url.as_deref().map(codex_responses_endpoint);
+    let active_provider = active_config_provider
+        .as_deref()
+        .map(|provider| {
+            if provider == "openai" {
+                "official".to_string()
+            } else if let Some(id) = custom_provider_id_from_codex_provider_id(provider) {
+                format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}")
+            } else {
+                base_url
+                    .as_deref()
+                    .and_then(|url| custom_provider_selector_by_base_url("codex", url, custom_providers))
+                    .unwrap_or_else(|| "custom".to_string())
+            }
+        });
 
     AgentToolConfigState {
         path: path_to_string(path),
@@ -696,6 +1077,7 @@ fn read_codex_config_state(path: &Path) -> AgentToolConfigState {
         endpoint,
         model,
         token_configured,
+        custom_providers: custom_provider_summaries("codex", custom_providers),
     }
 }
 
@@ -796,8 +1178,7 @@ fn strip_codex_managed_config(text: &str) -> String {
 
         if let Some(header) = parse_toml_section_header(trimmed) {
             section = Some(header.clone());
-            skipping_managed_section =
-                header == format!("model_providers.{XUYA_CODEX_PROVIDER_ID}");
+            skipping_managed_section = is_xuya_codex_provider_section(&header);
         }
 
         if skipping_managed_section {
@@ -822,6 +1203,15 @@ fn merge_codex_config(prefix: String, preserved: String) -> String {
     } else {
         format!("{prefix}\n\n{preserved}\n")
     }
+}
+
+fn is_xuya_codex_provider_section(section: &str) -> bool {
+    section
+        .strip_prefix("model_providers.")
+        .is_some_and(|provider| {
+            provider == XUYA_CODEX_PROVIDER_ID
+                || provider.starts_with(&format!("{XUYA_CODEX_PROVIDER_ID}_"))
+        })
 }
 
 fn is_codex_managed_top_level_key(key: &str) -> bool {

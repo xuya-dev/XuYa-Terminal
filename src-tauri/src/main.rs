@@ -23,6 +23,8 @@ fn main() {
             commands::find_latest_agent_session,
             commands::get_agent_config_state,
             commands::apply_agent_provider_config,
+            commands::save_agent_custom_provider,
+            commands::delete_agent_custom_provider,
         ])
         .run(tauri::generate_context!())
         .expect("error while running XuYa");

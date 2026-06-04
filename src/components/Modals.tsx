@@ -103,9 +103,19 @@ interface AgentProviderOption {
 
 interface AgentDraft {
   providerId: string;
+  customName: string;
   baseUrl: string;
   apiKey: string;
   model: string;
+}
+
+interface AgentCustomProviderSummary {
+  id: string;
+  name: string;
+  baseUrl: string;
+  endpoint: string;
+  model?: string | null;
+  tokenConfigured: boolean;
 }
 
 interface AgentToolConfigState {
@@ -116,6 +126,7 @@ interface AgentToolConfigState {
   endpoint?: string | null;
   model?: string | null;
   tokenConfigured: boolean;
+  customProviders: AgentCustomProviderSummary[];
 }
 
 interface AgentConfigState {
@@ -307,8 +318,27 @@ function providerOptionsFor(tool: AgentTool) {
   return tool === "claude" ? CLAUDE_PROVIDER_OPTIONS : CODEX_PROVIDER_OPTIONS;
 }
 
+function isCustomProviderId(providerId: string) {
+  return providerId === "custom" || providerId.startsWith("custom:");
+}
+
+function customProviderId(providerId: string) {
+  return providerId.startsWith("custom:") ? providerId.slice(7) : undefined;
+}
+
+function customProviderSelector(id: string) {
+  return `custom:${id}`;
+}
+
+function defaultCustomModel(tool: AgentTool) {
+  return tool === "codex" ? "gpt-5-codex" : "";
+}
+
 function findProvider(tool: AgentTool, providerId: string) {
   const options = providerOptionsFor(tool);
+  if (isCustomProviderId(providerId)) {
+    return options.find((option) => option.id === "custom") ?? options[0];
+  }
   return options.find((option) => option.id === providerId) ?? options[0];
 }
 
@@ -316,6 +346,7 @@ function defaultAgentDraft(tool: AgentTool): AgentDraft {
   const provider = providerOptionsFor(tool)[0];
   return {
     providerId: provider.id,
+    customName: "",
     baseUrl: provider.baseUrl,
     apiKey: "",
     model: provider.model ?? "",
@@ -329,9 +360,17 @@ function loadAgentDraft(tool: AgentTool): AgentDraft {
 
   try {
     const parsed = JSON.parse(raw) as Partial<AgentDraft>;
-    const provider = findProvider(tool, parsed.providerId ?? fallback.providerId);
+    const parsedProviderId =
+      typeof parsed.providerId === "string"
+        ? parsed.providerId
+        : fallback.providerId;
+    const provider = findProvider(tool, parsedProviderId);
     return {
-      providerId: provider.id,
+      providerId: isCustomProviderId(parsedProviderId)
+        ? parsedProviderId
+        : provider.id,
+      customName:
+        typeof parsed.customName === "string" ? parsed.customName : "",
       baseUrl:
         typeof parsed.baseUrl === "string" ? parsed.baseUrl : provider.baseUrl,
       apiKey: "",
@@ -350,6 +389,7 @@ function persistAgentDraft(tool: AgentTool, draft: AgentDraft) {
     AGENT_DRAFT_KEYS[tool],
     JSON.stringify({
       providerId: draft.providerId,
+      customName: draft.customName,
       baseUrl: draft.baseUrl,
       model: draft.model,
     }),
@@ -385,6 +425,25 @@ function basenamePath(path?: string | null) {
   if (!path) return "";
   const normalized = path.replace(/\\/g, "/");
   return normalized.split("/").slice(-2).join("/");
+}
+
+function resolveStateProviderId(tool: AgentTool, activeProvider?: string | null) {
+  if (!activeProvider) return undefined;
+  if (activeProvider === "openai") return "official";
+  if (isCustomProviderId(activeProvider)) return activeProvider;
+  if (providerOptionsFor(tool).some((provider) => provider.id === activeProvider)) {
+    return activeProvider;
+  }
+  return "custom";
+}
+
+function findCustomProvider(
+  providerId: string,
+  customProviders?: AgentCustomProviderSummary[],
+) {
+  const id = customProviderId(providerId);
+  if (!id) return undefined;
+  return customProviders?.find((provider) => provider.id === id);
 }
 
 /* ──────────────────────────────────────────── */
@@ -581,6 +640,7 @@ function AgentConfigSettings() {
   const [state, setState] = useState<AgentConfigState | null>(null);
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState<AgentTool | null>(null);
+  const [saving, setSaving] = useState<AgentTool | null>(null);
   const [message, setMessage] = useState<AgentConfigMessage | null>(null);
   const [claudeDraft, setClaudeDraft] = useState<AgentDraft>(() =>
     loadAgentDraft("claude"),
@@ -613,32 +673,47 @@ function AgentConfigSettings() {
 
     setClaudeDraft((current) => {
       if (!state.claude.activeProvider && !state.claude.baseUrl) return current;
-      const provider = findProvider(
-        "claude",
-        state.claude.activeProvider ?? current.providerId,
+      const providerId =
+        resolveStateProviderId("claude", state.claude.activeProvider) ??
+        current.providerId;
+      const provider = findProvider("claude", providerId);
+      const customProvider = findCustomProvider(
+        providerId,
+        state.claude.customProviders,
       );
       return {
         ...current,
-        providerId: provider.id,
-        baseUrl: state.claude.baseUrl ?? provider.baseUrl,
-        model: state.claude.model ?? provider.model ?? current.model,
+        providerId,
+        customName: customProvider?.name ?? current.customName,
+        baseUrl: customProvider?.baseUrl ?? state.claude.baseUrl ?? provider.baseUrl,
+        model:
+          customProvider?.model ??
+          state.claude.model ??
+          provider.model ??
+          current.model,
       };
     });
 
     setCodexDraft((current) => {
       if (!state.codex.activeProvider && !state.codex.baseUrl) return current;
       const providerId =
-        state.codex.activeProvider === "openai"
-          ? "official"
-          : state.codex.activeProvider
-            ? "custom"
-            : current.providerId;
+        resolveStateProviderId("codex", state.codex.activeProvider) ??
+        current.providerId;
       const provider = findProvider("codex", providerId);
+      const customProvider = findCustomProvider(
+        providerId,
+        state.codex.customProviders,
+      );
       return {
         ...current,
-        providerId: provider.id,
-        baseUrl: state.codex.baseUrl ?? provider.baseUrl,
-        model: state.codex.model ?? provider.model ?? current.model,
+        providerId,
+        customName: customProvider?.name ?? current.customName,
+        baseUrl: customProvider?.baseUrl ?? state.codex.baseUrl ?? provider.baseUrl,
+        model:
+          customProvider?.model ??
+          state.codex.model ??
+          provider.model ??
+          current.model,
       };
     });
   }, [state]);
@@ -646,13 +721,133 @@ function AgentConfigSettings() {
   useEffect(() => persistAgentDraft("claude", claudeDraft), [claudeDraft]);
   useEffect(() => persistAgentDraft("codex", codexDraft), [codexDraft]);
 
+  const updateDraftForTool = (tool: AgentTool, patch: Partial<AgentDraft>) => {
+    if (tool === "claude") {
+      setClaudeDraft((current) => ({ ...current, ...patch }));
+    } else {
+      setCodexDraft((current) => ({ ...current, ...patch }));
+    }
+  };
+
+  const saveCustomProvider = async (
+    tool: AgentTool,
+    draft: AgentDraft,
+    options: { silent?: boolean } = {},
+  ) => {
+    if (!draft.customName.trim()) {
+      setMessage({ tone: "error", text: "请先填写自定义厂商名称。" });
+      return null;
+    }
+    if (!draft.baseUrl.trim()) {
+      setMessage({ tone: "error", text: "请先填写服务端点。" });
+      return null;
+    }
+
+    const currentCustom = findCustomProvider(
+      draft.providerId,
+      tool === "claude"
+        ? state?.claude.customProviders
+        : state?.codex.customProviders,
+    );
+    if (!draft.apiKey.trim() && !currentCustom?.tokenConfigured) {
+      setMessage({ tone: "error", text: "请先填写 API Key。" });
+      return null;
+    }
+
+    setSaving(tool);
+    if (!options.silent) {
+      setMessage({ tone: "info", text: "正在保存自定义厂商..." });
+    }
+    try {
+      const saved = await invoke<AgentCustomProviderSummary>(
+        "save_agent_custom_provider",
+        {
+          request: {
+            tool,
+            providerId: customProviderId(draft.providerId),
+            name: draft.customName,
+            baseUrl: draft.baseUrl,
+            apiKey: draft.apiKey,
+            model: draft.model,
+          },
+        },
+      );
+      updateDraftForTool(tool, {
+        providerId: customProviderSelector(saved.id),
+        customName: saved.name,
+        baseUrl: saved.baseUrl,
+        apiKey: "",
+        model: saved.model ?? defaultCustomModel(tool),
+      });
+      await loadState();
+      if (!options.silent) {
+        setMessage({ tone: "success", text: `${saved.name} 已保存。` });
+      }
+      return saved;
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const deleteCustomProvider = async (tool: AgentTool, providerId: string) => {
+    const target = findCustomProvider(
+      providerId,
+      tool === "claude"
+        ? state?.claude.customProviders
+        : state?.codex.customProviders,
+    );
+    if (!target) return;
+    const confirmed = window.confirm(
+      `删除自定义厂商「${target.name}」？已写入工具的当前配置不会被清理。`,
+    );
+    if (!confirmed) return;
+
+    setSaving(tool);
+    setMessage({ tone: "info", text: "正在删除自定义厂商..." });
+    try {
+      await invoke("delete_agent_custom_provider", {
+        tool,
+        providerId: target.id,
+      });
+      updateDraftForTool(tool, defaultAgentDraft(tool));
+      await loadState();
+      setMessage({ tone: "success", text: `${target.name} 已删除。` });
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const applyConfig = async (
     tool: AgentTool,
     draft: AgentDraft,
     currentState?: AgentToolConfigState,
   ) => {
-    const provider = findProvider(tool, draft.providerId);
-    if (provider.id !== "official") {
+    let nextDraft = draft;
+    let provider = findProvider(tool, nextDraft.providerId);
+    if (isCustomProviderId(nextDraft.providerId)) {
+      const saved = await saveCustomProvider(tool, nextDraft, { silent: true });
+      if (!saved) return;
+      nextDraft = {
+        ...nextDraft,
+        providerId: customProviderSelector(saved.id),
+        customName: saved.name,
+        baseUrl: saved.baseUrl,
+        apiKey: "",
+        model: saved.model ?? defaultCustomModel(tool),
+      };
+      provider = findProvider(tool, nextDraft.providerId);
+    } else if (provider.id !== "official") {
       if (!draft.baseUrl.trim()) {
         setMessage({ tone: "error", text: "请先填写服务端点。" });
         return;
@@ -671,10 +866,10 @@ function AgentConfigSettings() {
         {
           request: {
             tool,
-            providerId: provider.id,
-            baseUrl: draft.baseUrl,
-            apiKey: draft.apiKey,
-            model: draft.model,
+            providerId: nextDraft.providerId,
+            baseUrl: nextDraft.baseUrl,
+            apiKey: nextDraft.apiKey,
+            model: nextDraft.model,
           },
         },
       );
@@ -684,10 +879,14 @@ function AgentConfigSettings() {
       } else {
         setCodexDraft((current) => ({ ...current, apiKey: "" }));
       }
+      const label =
+        nextDraft.customName.trim() && isCustomProviderId(nextDraft.providerId)
+          ? nextDraft.customName.trim()
+          : provider.label;
       setMessage({
         tone: "success",
         text: `${tool === "claude" ? "Claude Code" : "Codex"} 已切换到 ${
-          provider.label
+          label
         }，写入 ${basenamePath(result.path)}。`,
       });
     } catch (error) {
@@ -736,20 +935,30 @@ function AgentConfigSettings() {
           draft={claudeDraft}
           state={state?.claude}
           applying={applying === "claude"}
+          saving={saving === "claude"}
           onDraftChange={setClaudeDraft}
+          onSaveCustom={() => void saveCustomProvider("claude", claudeDraft)}
+          onDeleteCustom={(providerId) =>
+            void deleteCustomProvider("claude", providerId)
+          }
           onApply={() => void applyConfig("claude", claudeDraft, state?.claude)}
         />
         <AgentConfigCard
           tool="codex"
           title="Codex"
-          description="model_providers.xuya_custom + responses"
+          description="model_providers.xuya_custom_* + responses"
           endpointLabel="/v1/responses"
           icon={<Codex size={20} />}
           providers={CODEX_PROVIDER_OPTIONS}
           draft={codexDraft}
           state={state?.codex}
           applying={applying === "codex"}
+          saving={saving === "codex"}
           onDraftChange={setCodexDraft}
+          onSaveCustom={() => void saveCustomProvider("codex", codexDraft)}
+          onDeleteCustom={(providerId) =>
+            void deleteCustomProvider("codex", providerId)
+          }
           onApply={() => void applyConfig("codex", codexDraft, state?.codex)}
         />
       </div>
@@ -780,7 +989,10 @@ function AgentConfigCard({
   draft,
   state,
   applying,
+  saving,
   onDraftChange,
+  onSaveCustom,
+  onDeleteCustom,
   onApply,
 }: {
   tool: AgentTool;
@@ -792,11 +1004,18 @@ function AgentConfigCard({
   draft: AgentDraft;
   state?: AgentToolConfigState;
   applying: boolean;
+  saving: boolean;
   onDraftChange: (draft: AgentDraft) => void;
+  onSaveCustom: () => void;
+  onDeleteCustom: (providerId: string) => void;
   onApply: () => void;
 }) {
   const activeProvider = findProvider(tool, draft.providerId);
-  const usesOfficial = activeProvider.id === "official";
+  const usesCustom = isCustomProviderId(draft.providerId);
+  const usesOfficial = !usesCustom && activeProvider.id === "official";
+  const customProviders = state?.customProviders ?? [];
+  const selectedCustom = findCustomProvider(draft.providerId, customProviders);
+  const builtInProviders = providers.filter((provider) => provider.id !== "custom");
   const endpoint = endpointPreview(tool, draft.baseUrl);
 
   const updateDraft = (patch: Partial<AgentDraft>) => {
@@ -807,8 +1026,30 @@ function AgentConfigCard({
     const provider = findProvider(tool, providerId);
     updateDraft({
       providerId: provider.id,
+      customName: "",
       baseUrl: provider.baseUrl,
+      apiKey: "",
       model: provider.model ?? draft.model,
+    });
+  };
+
+  const handleNewCustom = () => {
+    updateDraft({
+      providerId: "custom",
+      customName: "",
+      baseUrl: "",
+      apiKey: "",
+      model: defaultCustomModel(tool),
+    });
+  };
+
+  const handleCustomSelect = (provider: AgentCustomProviderSummary) => {
+    updateDraft({
+      providerId: customProviderSelector(provider.id),
+      customName: provider.name,
+      baseUrl: provider.baseUrl,
+      apiKey: "",
+      model: provider.model ?? defaultCustomModel(tool),
     });
   };
 
@@ -824,8 +1065,8 @@ function AgentConfigCard({
       </div>
 
       <div className="xy-agent-provider-grid">
-        {providers.map((provider) => {
-          const isActive = provider.id === activeProvider.id;
+        {builtInProviders.map((provider) => {
+          const isActive = !usesCustom && provider.id === activeProvider.id;
           return (
             <button
               key={provider.id}
@@ -845,7 +1086,89 @@ function AgentConfigCard({
         })}
       </div>
 
+      <div className="xy-agent-custom-panel">
+        <div className="xy-agent-custom-head">
+          <span>自定义厂商</span>
+          <button
+            className={`xy-mini-btn xy-mini-btn--compact ${
+              draft.providerId === "custom" ? "is-active" : ""
+            }`}
+            type="button"
+            onClick={handleNewCustom}
+          >
+            <Plus size={12} strokeWidth={1.8} />
+            新增
+          </button>
+        </div>
+        <div className="xy-agent-custom-list">
+          {customProviders.length === 0 && (
+            <span className="xy-agent-custom-empty">暂无保存的自定义厂商</span>
+          )}
+          {customProviders.map((provider) => {
+            const providerId = customProviderSelector(provider.id);
+            const isActive = providerId === draft.providerId;
+            return (
+              <div
+                key={provider.id}
+                className={`xy-agent-custom-item ${
+                  isActive ? "is-active" : ""
+                }`}
+                style={
+                  {
+                    "--xy-provider-color": "#64748B",
+                  } as CSSProperties
+                }
+              >
+                <button
+                  className="xy-agent-custom-main"
+                  type="button"
+                  onClick={() => handleCustomSelect(provider)}
+                  title={provider.endpoint}
+                >
+                  <span className="xy-provider-icon">
+                    <NewAPI size={14} />
+                  </span>
+                  <span className="xy-agent-custom-text">
+                    <strong>{provider.name}</strong>
+                    <small>{provider.model || provider.endpoint}</small>
+                  </span>
+                  <span
+                    className={`xy-agent-custom-token ${
+                      provider.tokenConfigured ? "is-ready" : ""
+                    }`}
+                  >
+                    {provider.tokenConfigured ? "Key" : "缺 Key"}
+                  </span>
+                </button>
+                <button
+                  className="xy-agent-custom-delete"
+                  type="button"
+                  title="删除自定义厂商"
+                  onClick={() => onDeleteCustom(providerId)}
+                >
+                  <Trash2 size={12} strokeWidth={1.8} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="xy-agent-fields">
+        {usesCustom && (
+          <label className="xy-field xy-field--wide">
+            <span>
+              <Server size={12} strokeWidth={1.8} />
+              厂商名称
+            </span>
+            <input
+              value={draft.customName}
+              placeholder="new-api / sub2api"
+              onChange={(e) => updateDraft({ customName: e.target.value })}
+            />
+          </label>
+        )}
+
         <label className="xy-field xy-field--wide">
           <span>
             <Server size={12} strokeWidth={1.8} />
@@ -872,7 +1195,15 @@ function AgentConfigCard({
             value={draft.apiKey}
             disabled={usesOfficial}
             type="password"
-            placeholder={state?.tokenConfigured ? "已配置，留空不显示" : "sk-..."}
+            placeholder={
+              usesCustom
+                ? selectedCustom?.tokenConfigured
+                  ? "已保存，留空不显示"
+                  : "sk-..."
+                : state?.tokenConfigured
+                  ? "已配置，留空不显示"
+                  : "sk-..."
+            }
             onChange={(e) => updateDraft({ apiKey: e.target.value })}
           />
         </label>
@@ -896,19 +1227,36 @@ function AgentConfigCard({
             端点 {usesOfficial ? "官方登录" : endpoint || "待填写"}
           </span>
         </div>
-        <button
-          className="xy-mini-btn xy-mini-btn--accent"
-          type="button"
-          disabled={applying}
-          onClick={onApply}
-        >
-          {applying ? (
-            <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
-          ) : (
-            <Save size={13} strokeWidth={1.8} />
+        <div className="xy-agent-actions">
+          {usesCustom && (
+            <button
+              className="xy-mini-btn"
+              type="button"
+              disabled={saving || applying}
+              onClick={onSaveCustom}
+            >
+              {saving ? (
+                <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
+              ) : (
+                <Save size={13} strokeWidth={1.8} />
+              )}
+              保存厂商
+            </button>
           )}
-          应用
-        </button>
+          <button
+            className="xy-mini-btn xy-mini-btn--accent"
+            type="button"
+            disabled={applying || saving}
+            onClick={onApply}
+          >
+            {applying ? (
+              <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
+            ) : (
+              <Save size={13} strokeWidth={1.8} />
+            )}
+            应用
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -8,6 +8,7 @@
 - 设置页面新增 AI 配置标签页，支持在 XuYa Terminal 内快速配置和切换 Claude Code 与 Codex。
 - Claude Code 支持官方、ZhiPu GLM、MiniMax、Kimi、DeepSeek、XiaoMi Mimo 与自定义端点。
 - Codex 支持官方与自定义端点，并固定使用 Responses API 配置。
+- Claude Code 与 Codex 的自定义厂商支持保存多个条目，可在设置页快速切换、更新或删除。
 - 写入范围保持轻量：Claude Code 写入 `~/.claude/settings.json`，Codex 写入 `~/.codex/config.toml`。
 - 端点能力保持约束：Claude Code 仅展示 `/v1/messages`，Codex 仅展示 `/v1/responses`，不提供反代协议转换。
 
