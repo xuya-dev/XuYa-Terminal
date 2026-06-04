@@ -20,6 +20,8 @@ const XUYA_CODEX_EXTRA_BEGIN: &str = "# XuYa custom config begin";
 const XUYA_CODEX_EXTRA_END: &str = "# XuYa custom config end";
 const CLAUDE_TOKEN_PLACEHOLDER: &str = "${ANTHROPIC_AUTH_TOKEN}";
 const CODEX_TOKEN_PLACEHOLDER: &str = "${CODEX_API_KEY}";
+const MODEL_FETCH_TIMEOUT_SECS: u64 = 15;
+const MODEL_FETCH_ERROR_BODY_MAX_CHARS: usize = 512;
 
 const CLAUDE_MANAGED_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
@@ -51,6 +53,18 @@ const CLAUDE_KNOWN_PROVIDERS: &[(&str, &str)] = &[
     ("xiaomimimo", "https://api.xiaomimimo.com/anthropic"),
 ];
 
+const MODEL_FETCH_COMPAT_SUFFIXES: &[&str] = &[
+    "/api/claudecode",
+    "/api/anthropic",
+    "/apps/anthropic",
+    "/api/coding",
+    "/claudecode",
+    "/anthropic",
+    "/step_plan",
+    "/coding",
+    "/claude",
+];
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProviderConfigRequest {
@@ -78,6 +92,15 @@ pub struct AgentCustomProviderSaveRequest {
     sonnet_model: Option<String>,
     opus_model: Option<String>,
     extra_config: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelFetchRequest {
+    tool: String,
+    provider_id: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +176,31 @@ pub struct AgentConfigApplyResult {
     path: String,
     base_url: Option<String>,
     endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentFetchedModel {
+    id: String,
+    owned_by: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelFetchResult {
+    endpoint: String,
+    models: Vec<AgentFetchedModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    data: Option<Vec<ModelEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelEntry {
+    id: String,
+    owned_by: Option<String>,
 }
 
 /// Open a new PTY session. Returns the session ID.
@@ -317,6 +365,13 @@ pub async fn delete_agent_custom_provider(tool: String, provider_id: String) -> 
         .map_err(|e| format!("Custom provider delete failed: {e}"))?
 }
 
+#[tauri::command]
+pub async fn fetch_agent_provider_models(
+    request: AgentModelFetchRequest,
+) -> Result<AgentModelFetchResult, String> {
+    fetch_agent_provider_models_inner(request).await
+}
+
 fn read_agent_config_state() -> Result<AgentConfigState, String> {
     let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
     let claude_path = claude_settings_path(&home);
@@ -411,6 +466,43 @@ fn delete_agent_custom_provider_inner(tool: &str, provider_id: &str) -> Result<(
 
     store.providers.retain(|provider| provider.id != target_id);
     write_custom_provider_store(&path, &store)
+}
+
+async fn fetch_agent_provider_models_inner(
+    request: AgentModelFetchRequest,
+) -> Result<AgentModelFetchResult, String> {
+    let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
+    let tool = parse_agent_tool(&request.tool)?;
+    let provider_id = request.provider_id.trim();
+    if provider_id.is_empty() {
+        return Err("Provider is required".to_string());
+    }
+
+    let store = read_custom_provider_store(&custom_provider_store_path(&home, tool))?;
+    let custom_id = custom_provider_id_from_selector(provider_id);
+    let stored_custom = custom_id
+        .as_deref()
+        .and_then(|id| find_custom_provider(&store.providers, id));
+    let raw_base_url = clean_optional_text(request.base_url.as_deref())
+        .or_else(|| stored_custom.map(|provider| provider.base_url.clone()))
+        .or_else(|| {
+            if tool == "claude" {
+                claude_known_provider_base_url(provider_id).map(str::to_string)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| "Base URL is required to fetch models".to_string())?;
+    let base_url = normalize_agent_base_url(tool, &raw_base_url)?;
+    let api_key = clean_optional_text(request.api_key.as_deref())
+        .or_else(|| {
+            stored_custom.and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+        })
+        .or_else(|| current_agent_api_key(&home, tool, custom_id.as_deref()))
+        .ok_or_else(|| "API Key is required to fetch models".to_string())?;
+
+    let (endpoint, models) = fetch_openai_compatible_models(&base_url, &api_key).await?;
+    Ok(AgentModelFetchResult { endpoint, models })
 }
 
 fn apply_claude_provider_config(
@@ -1088,6 +1180,161 @@ fn clean_codex_token(value: Option<String>) -> Option<String> {
     value
         .and_then(|value| clean_optional_text(Some(value.as_str())))
         .filter(|value| value != CODEX_TOKEN_PLACEHOLDER)
+}
+
+fn current_agent_api_key(home: &Path, tool: &str, custom_id: Option<&str>) -> Option<String> {
+    match tool {
+        "claude" => read_json_or_empty_object(&claude_settings_path(home))
+            .ok()
+            .and_then(|settings| extract_claude_api_key(&settings)),
+        "codex" => {
+            let current = fs::read_to_string(codex_config_path(home)).ok()?;
+            let current_provider = extract_top_level_toml_string(&current, "model_provider");
+            let target_provider = custom_id.map(codex_custom_provider_id);
+            target_provider
+                .as_deref()
+                .and_then(|provider| {
+                    clean_codex_token(extract_codex_provider_string(
+                        &current,
+                        provider,
+                        "experimental_bearer_token",
+                    ))
+                })
+                .or_else(|| {
+                    current_provider.as_deref().and_then(|provider| {
+                        clean_codex_token(extract_codex_provider_string(
+                            &current,
+                            provider,
+                            "experimental_bearer_token",
+                        ))
+                    })
+                })
+                .or_else(|| {
+                    clean_codex_token(extract_top_level_toml_string(
+                        &current,
+                        "experimental_bearer_token",
+                    ))
+                })
+        }
+        _ => None,
+    }
+}
+
+async fn fetch_openai_compatible_models(
+    base_url: &str,
+    api_key: &str,
+) -> Result<(String, Vec<AgentFetchedModel>), String> {
+    let candidates = build_models_url_candidates(base_url)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(MODEL_FETCH_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let mut last_err: Option<String> = None;
+
+    for url in candidates {
+        let response = client
+            .get(&url)
+            .bearer_auth(api_key)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {e}"))?;
+        let status = response.status();
+
+        if status.is_success() {
+            let resp = response
+                .json::<ModelsResponse>()
+                .await
+                .map_err(|e| format!("Failed to parse models response: {e}"))?;
+            let mut models = resp
+                .data
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|model| {
+                    clean_optional_text(Some(model.id.as_str())).map(|id| AgentFetchedModel {
+                        id,
+                        owned_by: model.owned_by,
+                    })
+                })
+                .collect::<Vec<_>>();
+            models.sort_by(|a, b| a.id.cmp(&b.id));
+            return Ok((url, models));
+        }
+
+        let body = truncate_model_fetch_body(response.text().await.unwrap_or_default());
+        if status == reqwest::StatusCode::NOT_FOUND
+            || status == reqwest::StatusCode::METHOD_NOT_ALLOWED
+        {
+            last_err = Some(format!("HTTP {status}: {body}"));
+            continue;
+        }
+        return Err(format!("HTTP {status}: {body}"));
+    }
+
+    Err(format!(
+        "All model endpoints failed: {}",
+        last_err.unwrap_or_else(|| "no candidates".to_string())
+    ))
+}
+
+fn build_models_url_candidates(base_url: &str) -> Result<Vec<String>, String> {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("Base URL is empty".to_string());
+    }
+
+    let mut candidates = Vec::new();
+    if ends_with_version_segment(trimmed) {
+        candidates.push(format!("{trimmed}/models"));
+        if !trimmed.ends_with("/v1") {
+            candidates.push(format!("{trimmed}/v1/models"));
+        }
+    } else {
+        candidates.push(format!("{trimmed}/v1/models"));
+    }
+
+    if let Some(stripped) = strip_model_fetch_compat_suffix(trimmed) {
+        let root = stripped.trim_end_matches('/');
+        if !root.is_empty() && root.contains("://") {
+            candidates.push(format!("{root}/v1/models"));
+            candidates.push(format!("{root}/models"));
+        }
+    }
+
+    let mut unique = Vec::with_capacity(candidates.len());
+    for url in candidates {
+        if !unique.iter().any(|item| item == &url) {
+            unique.push(url);
+        }
+    }
+    Ok(unique)
+}
+
+fn truncate_model_fetch_body(body: String) -> String {
+    if body.chars().count() <= MODEL_FETCH_ERROR_BODY_MAX_CHARS {
+        body
+    } else {
+        let mut output = body
+            .chars()
+            .take(MODEL_FETCH_ERROR_BODY_MAX_CHARS)
+            .collect::<String>();
+        output.push_str("...");
+        output
+    }
+}
+
+fn strip_model_fetch_compat_suffix(base_url: &str) -> Option<&str> {
+    for suffix in MODEL_FETCH_COMPAT_SUFFIXES {
+        if base_url.ends_with(*suffix) {
+            return Some(&base_url[..base_url.len() - suffix.len()]);
+        }
+    }
+    None
+}
+
+fn ends_with_version_segment(url: &str) -> bool {
+    let last = url.rsplit('/').next().unwrap_or("");
+    last.strip_prefix('v')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn sanitize_codex_full_config(full_config: &str) -> String {

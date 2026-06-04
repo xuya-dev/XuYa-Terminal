@@ -157,6 +157,16 @@ interface AgentConfigApplyResult {
   endpoint?: string | null;
 }
 
+interface AgentFetchedModel {
+  id: string;
+  ownedBy?: string | null;
+}
+
+interface AgentModelFetchResult {
+  endpoint: string;
+  models: AgentFetchedModel[];
+}
+
 type AgentConfigMessage = {
   tone: "success" | "error" | "info";
   text: string;
@@ -1412,6 +1422,10 @@ function AgentConfigCard({
   const selectedCustom = findCustomProvider(draft.providerId, customProviders);
   const builtInProviders = providers.filter((provider) => provider.id !== "custom");
   const endpoint = endpointPreview(tool, draft.baseUrl);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<AgentFetchedModel[]>([]);
+  const [modelFetchMessage, setModelFetchMessage] =
+    useState<AgentConfigMessage | null>(null);
 
   const updateDraft = (
     patch: Partial<AgentDraft>,
@@ -1481,6 +1495,65 @@ function AgentConfigCard({
           extraConfig: "",
         }),
     });
+  };
+
+  const handleFetchModels = async () => {
+    if (usesOfficial) {
+      setModelFetchMessage({ tone: "error", text: "官方登录不支持拉取模型列表。" });
+      return;
+    }
+    if (!draft.baseUrl.trim()) {
+      setModelFetchMessage({ tone: "error", text: "请先填写基础地址。" });
+      return;
+    }
+
+    setFetchingModels(true);
+    setModelFetchMessage({ tone: "info", text: "正在获取模型列表..." });
+    try {
+      const result = await invoke<AgentModelFetchResult>(
+        "fetch_agent_provider_models",
+        {
+          request: {
+            tool,
+            providerId: draft.providerId,
+            baseUrl: draft.baseUrl,
+            apiKey: draft.apiKey,
+          },
+        },
+      );
+      setFetchedModels(result.models);
+      setModelFetchMessage({
+        tone: "success",
+        text:
+          result.models.length > 0
+            ? `已获取 ${result.models.length} 个模型。`
+            : `请求成功，但 ${result.endpoint} 未返回模型。`,
+      });
+    } catch (error) {
+      setFetchedModels([]);
+      setModelFetchMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  const applyFetchedModel = (
+    modelId: string,
+    target: "model" | "sonnetModel" | "opusModel" | "haikuModel" =
+      tool === "claude" ? "sonnetModel" : "model",
+  ) => {
+    if (target === "sonnetModel") {
+      updateDraft({ sonnetModel: modelId });
+    } else if (target === "opusModel") {
+      updateDraft({ opusModel: modelId });
+    } else if (target === "haikuModel") {
+      updateDraft({ haikuModel: modelId });
+    } else {
+      updateDraft({ model: modelId });
+    }
   };
 
   return (
@@ -1637,6 +1710,80 @@ function AgentConfigCard({
             onChange={(e) => updateDraft({ apiKey: e.target.value })}
           />
         </label>
+
+        <div className="xy-agent-model-fetch xy-field--wide">
+          <div className="xy-agent-model-fetch-head">
+            <span>模型列表</span>
+            <button
+              className="xy-mini-btn xy-mini-btn--compact"
+              type="button"
+              disabled={fetchingModels || usesOfficial || saving || applying}
+              title={
+                usesOfficial
+                  ? "官方登录不支持拉取模型列表"
+                  : "从当前厂商获取模型列表"
+              }
+              onClick={() => void handleFetchModels()}
+            >
+              {fetchingModels ? (
+                <Loader2 className="xy-spin" size={12} strokeWidth={1.8} />
+              ) : (
+                <Download size={12} strokeWidth={1.8} />
+              )}
+              获取模型
+            </button>
+          </div>
+          {modelFetchMessage && (
+            <span className={`xy-agent-model-fetch-msg is-${modelFetchMessage.tone}`}>
+              {modelFetchMessage.text}
+            </span>
+          )}
+          {fetchedModels.length > 0 && (
+            <div className="xy-agent-model-list">
+              {fetchedModels.map((model) => (
+                <div className="xy-agent-model-item" key={model.id}>
+                  <button
+                    className="xy-agent-model-main"
+                    type="button"
+                    title={model.id}
+                    onClick={() => applyFetchedModel(model.id)}
+                  >
+                    <strong>{model.id}</strong>
+                    {model.ownedBy && <small>{model.ownedBy}</small>}
+                  </button>
+                  {tool === "claude" && (
+                    <div className="xy-agent-model-roles">
+                      <button
+                        type="button"
+                        onClick={() => applyFetchedModel(model.id, "sonnetModel")}
+                      >
+                        Sonnet
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyFetchedModel(model.id, "opusModel")}
+                      >
+                        Opus
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyFetchedModel(model.id, "haikuModel")}
+                      >
+                        Haiku
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyFetchedModel(model.id, "model")}
+                      >
+                        兜底
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {tool === "claude" ? (
           <div className="xy-agent-role-models xy-field--wide">
