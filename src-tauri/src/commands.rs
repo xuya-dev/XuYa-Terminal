@@ -108,6 +108,24 @@ pub struct AgentCustomProviderSaveRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentBuiltInProviderSaveRequest {
+    tool: String,
+    provider_id: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    model: Option<String>,
+    haiku_model: Option<String>,
+    haiku_model_name: Option<String>,
+    sonnet_model: Option<String>,
+    sonnet_model_name: Option<String>,
+    opus_model: Option<String>,
+    opus_model_name: Option<String>,
+    extra_config: Option<String>,
+    auth_config: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentModelFetchRequest {
     tool: String,
     provider_id: String,
@@ -147,6 +165,22 @@ struct AgentCustomProviderStore {
     providers: Vec<AgentCustomProvider>,
 }
 
+#[derive(Debug, Clone)]
+struct AgentBuiltInProvider {
+    id: String,
+    base_url: String,
+    api_key: String,
+    model: Option<String>,
+    haiku_model: Option<String>,
+    haiku_model_name: Option<String>,
+    sonnet_model: Option<String>,
+    sonnet_model_name: Option<String>,
+    opus_model: Option<String>,
+    opus_model_name: Option<String>,
+    extra_config: Option<String>,
+    auth_config: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCustomProviderSummary {
@@ -163,6 +197,25 @@ pub struct AgentCustomProviderSummary {
     opus_model: Option<String>,
     opus_model_name: Option<String>,
     extra_config: Option<String>,
+    token_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentBuiltInProviderSummary {
+    id: String,
+    base_url: String,
+    endpoint: Option<String>,
+    api_key: Option<String>,
+    model: Option<String>,
+    haiku_model: Option<String>,
+    haiku_model_name: Option<String>,
+    sonnet_model: Option<String>,
+    sonnet_model_name: Option<String>,
+    opus_model: Option<String>,
+    opus_model_name: Option<String>,
+    extra_config: Option<String>,
+    auth_config: Option<String>,
     token_configured: bool,
 }
 
@@ -187,6 +240,7 @@ pub struct AgentToolConfigState {
     auth_config: Option<String>,
     api_key: Option<String>,
     token_configured: bool,
+    built_in_providers: Vec<AgentBuiltInProviderSummary>,
     custom_providers: Vec<AgentCustomProviderSummary>,
 }
 
@@ -388,6 +442,15 @@ pub async fn save_agent_custom_provider(
 }
 
 #[tauri::command]
+pub async fn save_agent_builtin_provider(
+    request: AgentBuiltInProviderSaveRequest,
+) -> Result<AgentBuiltInProviderSummary, String> {
+    tokio::task::spawn_blocking(move || save_agent_builtin_provider_inner(request))
+        .await
+        .map_err(|e| format!("Built-in provider save failed: {e}"))?
+}
+
+#[tauri::command]
 pub async fn delete_agent_custom_provider(tool: String, provider_id: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || delete_agent_custom_provider_inner(&tool, &provider_id))
         .await
@@ -408,10 +471,17 @@ fn read_agent_config_state() -> Result<AgentConfigState, String> {
     let codex_auth_file_path = codex_auth_path(&home);
     let claude_store = read_custom_provider_store(&home, "claude")?;
     let codex_store = read_custom_provider_store(&home, "codex")?;
+    let claude_built_in = read_builtin_provider_store(&home, "claude")?;
+    let codex_built_in = read_builtin_provider_store(&home, "codex")?;
 
     Ok(AgentConfigState {
-        claude: read_claude_config_state(&claude_path, &claude_store.providers),
-        codex: read_codex_config_state(&codex_path, &codex_auth_file_path, &codex_store.providers),
+        claude: read_claude_config_state(&claude_path, &claude_store.providers, &claude_built_in),
+        codex: read_codex_config_state(
+            &codex_path,
+            &codex_auth_file_path,
+            &codex_store.providers,
+            &codex_built_in,
+        ),
     })
 }
 
@@ -492,6 +562,67 @@ fn save_agent_custom_provider_inner(
     summarize_custom_provider(tool, &provider)
 }
 
+fn save_agent_builtin_provider_inner(
+    request: AgentBuiltInProviderSaveRequest,
+) -> Result<AgentBuiltInProviderSummary, String> {
+    let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
+    let tool = parse_agent_tool(&request.tool)?;
+    let provider_id = clean_optional_text(Some(request.provider_id.as_str()))
+        .ok_or_else(|| "Provider is required".to_string())?;
+    if provider_id == "custom" || custom_provider_id_from_selector(&provider_id).is_some() {
+        return Err("Built-in provider id is required".to_string());
+    }
+
+    let existing = read_builtin_provider(&home, tool, &provider_id)?;
+    let base_url = if provider_id == "official" {
+        clean_optional_text(request.base_url.as_deref()).unwrap_or_default()
+    } else {
+        let raw_base_url = clean_optional_text(request.base_url.as_deref())
+            .or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|provider| clean_optional_text(Some(provider.base_url.as_str())))
+            })
+            .or_else(|| {
+                if tool == "claude" {
+                    claude_known_provider_base_url(&provider_id).map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| "Base URL is required".to_string())?;
+        normalize_agent_base_url(tool, &raw_base_url)?
+    };
+
+    let existing_api_key = existing
+        .as_ref()
+        .and_then(|provider| clean_agent_api_key(tool, Some(provider.api_key.as_str())));
+    let api_key = clean_agent_api_key(tool, request.api_key.as_deref())
+        .or(existing_api_key)
+        .unwrap_or_default();
+    if provider_id != "official" && api_key.is_empty() {
+        return Err("API Key is required".to_string());
+    }
+
+    let provider = AgentBuiltInProvider {
+        id: provider_id,
+        base_url,
+        api_key,
+        model: normalize_agent_model(tool, request.model.as_deref()),
+        haiku_model: normalize_claude_role_model(tool, request.haiku_model.as_deref()),
+        haiku_model_name: normalize_claude_role_model(tool, request.haiku_model_name.as_deref()),
+        sonnet_model: normalize_claude_role_model(tool, request.sonnet_model.as_deref()),
+        sonnet_model_name: normalize_claude_role_model(tool, request.sonnet_model_name.as_deref()),
+        opus_model: normalize_claude_role_model(tool, request.opus_model.as_deref()),
+        opus_model_name: normalize_claude_role_model(tool, request.opus_model_name.as_deref()),
+        extra_config: normalize_full_config(tool, request.extra_config.as_deref())?,
+        auth_config: normalize_agent_auth_config(tool, request.auth_config.as_deref())?,
+    };
+
+    write_builtin_provider(&home, tool, &provider)?;
+    summarize_builtin_provider(tool, &provider)
+}
+
 fn delete_agent_custom_provider_inner(tool: &str, provider_id: &str) -> Result<(), String> {
     let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
     let tool = parse_agent_tool(tool)?;
@@ -519,8 +650,18 @@ async fn fetch_agent_provider_models_inner(
     let stored_custom = custom_id
         .as_deref()
         .and_then(|id| find_custom_provider(&store.providers, id));
+    let stored_built_in = if custom_id.is_none() {
+        read_builtin_provider(&home, tool, provider_id)?
+    } else {
+        None
+    };
     let raw_base_url = clean_optional_text(request.base_url.as_deref())
         .or_else(|| stored_custom.map(|provider| provider.base_url.clone()))
+        .or_else(|| {
+            stored_built_in
+                .as_ref()
+                .map(|provider| provider.base_url.clone())
+        })
         .or_else(|| {
             if tool == "claude" {
                 claude_known_provider_base_url(provider_id).map(str::to_string)
@@ -533,6 +674,11 @@ async fn fetch_agent_provider_models_inner(
     let api_key = clean_optional_text(request.api_key.as_deref())
         .or_else(|| {
             stored_custom.and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+        })
+        .or_else(|| {
+            stored_built_in
+                .as_ref()
+                .and_then(|provider| clean_agent_api_key(tool, Some(provider.api_key.as_str())))
         })
         .or_else(|| current_agent_api_key(&home, tool, custom_id.as_deref()))
         .ok_or_else(|| "API Key is required to fetch models".to_string())?;
@@ -556,6 +702,11 @@ fn apply_claude_provider_config(
         .as_deref()
         .and_then(|id| find_custom_provider(&custom_store.providers, id))
         .cloned();
+    let stored_built_in = if custom_id.is_none() {
+        read_builtin_provider(home, "claude", &provider_id)?
+    } else {
+        None
+    };
     let result_provider_id = custom_id
         .as_deref()
         .map(|id| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}"))
@@ -564,6 +715,11 @@ fn apply_claude_provider_config(
     let mut settings = clean_optional_text(request.extra_config.as_deref())
         .or_else(|| {
             stored_custom
+                .as_ref()
+                .and_then(|provider| provider.extra_config.clone())
+        })
+        .or_else(|| {
+            stored_built_in
                 .as_ref()
                 .and_then(|provider| provider.extra_config.clone())
         })
@@ -597,6 +753,11 @@ fn apply_claude_provider_config(
                         .as_ref()
                         .map(|provider| provider.base_url.clone())
                 })
+                .or_else(|| {
+                    stored_built_in
+                        .as_ref()
+                        .map(|provider| provider.base_url.clone())
+                })
                 .or_else(|| claude_known_provider_base_url(&provider_id).map(str::to_string))
                 .ok_or_else(|| "Claude base URL is required".to_string())?;
             let base_url = normalize_claude_base_url(&raw_base_url)?;
@@ -605,6 +766,11 @@ fn apply_claude_provider_config(
                     stored_custom
                         .as_ref()
                         .and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+                })
+                .or_else(|| {
+                    stored_built_in.as_ref().and_then(|provider| {
+                        clean_agent_api_key("claude", Some(provider.api_key.as_str()))
+                    })
                 })
                 .or(existing_api_key)
                 .ok_or_else(|| "Claude API Key is required".to_string())?;
@@ -618,21 +784,37 @@ fn apply_claude_provider_config(
             (Some(base_url), Some(endpoint))
         };
 
-        let model = clean_optional_text(request.model.as_deref()).or_else(|| {
-            stored_custom
-                .as_ref()
-                .and_then(|provider| provider.model.clone())
-        });
+        let model = clean_optional_text(request.model.as_deref())
+            .or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.model.clone())
+            })
+            .or_else(|| {
+                stored_built_in
+                    .as_ref()
+                    .and_then(|provider| provider.model.clone())
+            });
         let haiku_model = clean_optional_text(request.haiku_model.as_deref())
             .or_else(|| {
                 stored_custom
                     .as_ref()
                     .and_then(|provider| provider.haiku_model.clone())
             })
+            .or_else(|| {
+                stored_built_in
+                    .as_ref()
+                    .and_then(|provider| provider.haiku_model.clone())
+            })
             .or_else(|| model.clone());
-        let haiku_model_name =
-            clean_optional_text(request.haiku_model_name.as_deref()).or_else(|| {
+        let haiku_model_name = clean_optional_text(request.haiku_model_name.as_deref())
+            .or_else(|| {
                 stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.haiku_model_name.clone())
+            })
+            .or_else(|| {
+                stored_built_in
                     .as_ref()
                     .and_then(|provider| provider.haiku_model_name.clone())
             });
@@ -642,10 +824,20 @@ fn apply_claude_provider_config(
                     .as_ref()
                     .and_then(|provider| provider.sonnet_model.clone())
             })
+            .or_else(|| {
+                stored_built_in
+                    .as_ref()
+                    .and_then(|provider| provider.sonnet_model.clone())
+            })
             .or_else(|| model.clone());
-        let sonnet_model_name =
-            clean_optional_text(request.sonnet_model_name.as_deref()).or_else(|| {
+        let sonnet_model_name = clean_optional_text(request.sonnet_model_name.as_deref())
+            .or_else(|| {
                 stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.sonnet_model_name.clone())
+            })
+            .or_else(|| {
+                stored_built_in
                     .as_ref()
                     .and_then(|provider| provider.sonnet_model_name.clone())
             });
@@ -655,10 +847,20 @@ fn apply_claude_provider_config(
                     .as_ref()
                     .and_then(|provider| provider.opus_model.clone())
             })
+            .or_else(|| {
+                stored_built_in
+                    .as_ref()
+                    .and_then(|provider| provider.opus_model.clone())
+            })
             .or_else(|| model.clone());
-        let opus_model_name =
-            clean_optional_text(request.opus_model_name.as_deref()).or_else(|| {
+        let opus_model_name = clean_optional_text(request.opus_model_name.as_deref())
+            .or_else(|| {
                 stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.opus_model_name.clone())
+            })
+            .or_else(|| {
+                stored_built_in
                     .as_ref()
                     .and_then(|provider| provider.opus_model_name.clone())
             });
@@ -734,19 +936,36 @@ fn apply_codex_provider_config(
         .as_deref()
         .and_then(|id| find_custom_provider(&custom_store.providers, id))
         .cloned();
+    let stored_built_in = if custom_id.is_none() {
+        read_builtin_provider(home, "codex", &provider_id)?
+    } else {
+        None
+    };
     let result_provider_id = custom_id
         .as_deref()
         .map(|id| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}"))
         .unwrap_or_else(|| provider_id.clone());
-    let full_config =
-        normalize_full_config("codex", request.extra_config.as_deref())?.or_else(|| {
+    let full_config = normalize_full_config("codex", request.extra_config.as_deref())?
+        .or_else(|| {
             stored_custom.as_ref().and_then(|provider| {
+                normalize_full_config("codex", provider.extra_config.as_deref())
+                    .ok()
+                    .flatten()
+            })
+        })
+        .or_else(|| {
+            stored_built_in.as_ref().and_then(|provider| {
                 normalize_full_config("codex", provider.extra_config.as_deref())
                     .ok()
                     .flatten()
             })
         });
     let provided_auth_config = clean_optional_text(request.auth_config.as_deref())
+        .or_else(|| {
+            stored_built_in
+                .as_ref()
+                .and_then(|provider| provider.auth_config.clone())
+        })
         .map(|config| parse_codex_auth_config(&config))
         .transpose()?;
     let provided_auth_api_key = provided_auth_config
@@ -771,6 +990,11 @@ fn apply_codex_provider_config(
             .as_ref()
             .and_then(|provider| clean_codex_token(Some(provider.api_key.clone())))
     })
+    .or_else(|| {
+        stored_built_in
+            .as_ref()
+            .and_then(|provider| clean_codex_token(Some(provider.api_key.clone())))
+    })
     .or_else(|| provided_auth_api_key.clone())
     .or_else(|| current_auth_api_key.clone())
     .or_else(|| {
@@ -782,6 +1006,11 @@ fn apply_codex_provider_config(
     let model = clean_optional_text(request.model.as_deref())
         .or_else(|| {
             stored_custom
+                .as_ref()
+                .and_then(|provider| provider.model.clone())
+        })
+        .or_else(|| {
+            stored_built_in
                 .as_ref()
                 .and_then(|provider| provider.model.clone())
         })
@@ -808,6 +1037,11 @@ fn apply_codex_provider_config(
                     .as_ref()
                     .map(|provider| provider.base_url.clone())
             })
+            .or_else(|| {
+                stored_built_in
+                    .as_ref()
+                    .map(|provider| provider.base_url.clone())
+            })
             .ok_or_else(|| "Codex base URL is required".to_string())?;
         let base_url = normalize_codex_base_url(&raw_base_url)?;
         let api_key = clean_optional_text(request.api_key.as_deref())
@@ -815,6 +1049,11 @@ fn apply_codex_provider_config(
                 stored_custom
                     .as_ref()
                     .and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+            })
+            .or_else(|| {
+                stored_built_in.as_ref().and_then(|provider| {
+                    clean_agent_api_key("codex", Some(provider.api_key.as_str()))
+                })
             })
             .or(existing_api_key)
             .ok_or_else(|| "Codex API Key is required".to_string())?;
@@ -855,6 +1094,11 @@ fn apply_codex_provider_config(
                 stored_custom
                     .as_ref()
                     .and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+            })
+            .or_else(|| {
+                stored_built_in.as_ref().and_then(|provider| {
+                    clean_agent_api_key("codex", Some(provider.api_key.as_str()))
+                })
             })
             .or(provided_auth_api_key)
             .or(current_auth_api_key)
@@ -1199,6 +1443,106 @@ fn write_custom_provider_store(
         .map_err(|e| format!("Failed to commit custom providers: {e}"))
 }
 
+fn read_builtin_provider_store(
+    home: &Path,
+    tool: &str,
+) -> Result<Vec<AgentBuiltInProvider>, String> {
+    let conn = open_agent_provider_db(home)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, base_url, api_key, model,
+                    haiku_model, haiku_model_name,
+                    sonnet_model, sonnet_model_name,
+                    opus_model, opus_model_name,
+                    extra_config, auth_config
+             FROM agent_builtin_providers
+             WHERE tool = ?1
+             ORDER BY id",
+        )
+        .map_err(|e| format!("Failed to prepare built-in provider query: {e}"))?;
+    let rows = stmt
+        .query_map(params![tool], |row| {
+            Ok(AgentBuiltInProvider {
+                id: row.get(0)?,
+                base_url: row.get(1)?,
+                api_key: row.get(2)?,
+                model: row.get(3)?,
+                haiku_model: row.get(4)?,
+                haiku_model_name: row.get(5)?,
+                sonnet_model: row.get(6)?,
+                sonnet_model_name: row.get(7)?,
+                opus_model: row.get(8)?,
+                opus_model_name: row.get(9)?,
+                extra_config: row.get(10)?,
+                auth_config: row.get(11)?,
+            })
+        })
+        .map_err(|e| format!("Failed to read built-in providers: {e}"))?;
+
+    let mut providers = Vec::new();
+    for row in rows {
+        providers.push(row.map_err(|e| format!("Failed to decode built-in provider: {e}"))?);
+    }
+    Ok(providers)
+}
+
+fn read_builtin_provider(
+    home: &Path,
+    tool: &str,
+    provider_id: &str,
+) -> Result<Option<AgentBuiltInProvider>, String> {
+    Ok(read_builtin_provider_store(home, tool)?
+        .into_iter()
+        .find(|provider| provider.id == provider_id))
+}
+
+fn write_builtin_provider(
+    home: &Path,
+    tool: &str,
+    provider: &AgentBuiltInProvider,
+) -> Result<(), String> {
+    let conn = open_agent_provider_db(home)?;
+    conn.execute(
+        "INSERT INTO agent_builtin_providers (
+            tool, id, base_url, api_key, model,
+            haiku_model, haiku_model_name,
+            sonnet_model, sonnet_model_name,
+            opus_model, opus_model_name,
+            extra_config, auth_config, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, strftime('%s', 'now'))
+         ON CONFLICT(tool, id) DO UPDATE SET
+            base_url = excluded.base_url,
+            api_key = excluded.api_key,
+            model = excluded.model,
+            haiku_model = excluded.haiku_model,
+            haiku_model_name = excluded.haiku_model_name,
+            sonnet_model = excluded.sonnet_model,
+            sonnet_model_name = excluded.sonnet_model_name,
+            opus_model = excluded.opus_model,
+            opus_model_name = excluded.opus_model_name,
+            extra_config = excluded.extra_config,
+            auth_config = excluded.auth_config,
+            updated_at = excluded.updated_at",
+        params![
+            tool,
+            provider.id,
+            provider.base_url,
+            provider.api_key,
+            provider.model,
+            provider.haiku_model,
+            provider.haiku_model_name,
+            provider.sonnet_model,
+            provider.sonnet_model_name,
+            provider.opus_model,
+            provider.opus_model_name,
+            provider.extra_config,
+            provider.auth_config,
+        ],
+    )
+    .map_err(|e| format!("Failed to save built-in provider {}: {e}", provider.id))?;
+    Ok(())
+}
+
 fn open_agent_provider_db(home: &Path) -> Result<Connection, String> {
     let path = agent_provider_db_path(home);
     if let Some(parent) = path.parent() {
@@ -1224,10 +1568,28 @@ fn open_agent_provider_db(home: &Path) -> Result<Connection, String> {
             extra_config TEXT,
             updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
             PRIMARY KEY (tool, id)
+        );
+        CREATE TABLE IF NOT EXISTS agent_builtin_providers (
+            tool TEXT NOT NULL,
+            id TEXT NOT NULL,
+            base_url TEXT NOT NULL DEFAULT '',
+            api_key TEXT NOT NULL DEFAULT '',
+            model TEXT,
+            haiku_model TEXT,
+            haiku_model_name TEXT,
+            sonnet_model TEXT,
+            sonnet_model_name TEXT,
+            opus_model TEXT,
+            opus_model_name TEXT,
+            extra_config TEXT,
+            auth_config TEXT,
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            PRIMARY KEY (tool, id)
         );",
     )
     .map_err(|e| format!("Failed to initialize provider database: {e}"))?;
     ensure_agent_provider_columns(&conn)?;
+    ensure_agent_builtin_provider_columns(&conn)?;
     Ok(conn)
 }
 
@@ -1250,6 +1612,35 @@ fn ensure_agent_provider_columns(conn: &Connection) -> Result<(), String> {
                 [],
             )
             .map_err(|e| format!("Failed to add provider column {column}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn ensure_agent_builtin_provider_columns(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(agent_builtin_providers)")
+        .map_err(|e| format!("Failed to inspect built-in provider database schema: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("Failed to read built-in provider database schema: {e}"))?;
+    let mut columns = HashSet::new();
+    for row in rows {
+        columns.insert(row.map_err(|e| format!("Failed to decode built-in column: {e}"))?);
+    }
+
+    for column in [
+        "haiku_model_name",
+        "sonnet_model_name",
+        "opus_model_name",
+        "auth_config",
+    ] {
+        if !columns.contains(column) {
+            conn.execute(
+                &format!("ALTER TABLE agent_builtin_providers ADD COLUMN {column} TEXT"),
+                [],
+            )
+            .map_err(|e| format!("Failed to add built-in provider column {column}: {e}"))?;
         }
     }
     Ok(())
@@ -1347,6 +1738,52 @@ fn summarize_custom_provider(
     })
 }
 
+fn summarize_builtin_provider(
+    tool: &str,
+    provider: &AgentBuiltInProvider,
+) -> Result<AgentBuiltInProviderSummary, String> {
+    let base_url = clean_optional_text(Some(provider.base_url.as_str()))
+        .map(|value| normalize_agent_base_url(tool, &value))
+        .transpose()?
+        .unwrap_or_default();
+    let endpoint = if base_url.is_empty() {
+        None
+    } else {
+        Some(match tool {
+            "claude" => claude_messages_endpoint(&base_url),
+            "codex" => codex_responses_endpoint(&base_url),
+            _ => return Err(format!("Unsupported agent config target: {tool}")),
+        })
+    };
+    let api_key = clean_agent_api_key(tool, Some(provider.api_key.as_str()));
+    let extra_config = provider
+        .extra_config
+        .as_deref()
+        .and_then(|config| normalize_full_config(tool, Some(config)).ok().flatten());
+    let auth_config = if tool == "codex" {
+        provider.auth_config.clone()
+    } else {
+        None
+    };
+
+    Ok(AgentBuiltInProviderSummary {
+        id: provider.id.clone(),
+        base_url,
+        endpoint,
+        api_key: api_key.clone(),
+        model: provider.model.clone(),
+        haiku_model: provider.haiku_model.clone(),
+        haiku_model_name: provider.haiku_model_name.clone(),
+        sonnet_model: provider.sonnet_model.clone(),
+        sonnet_model_name: provider.sonnet_model_name.clone(),
+        opus_model: provider.opus_model.clone(),
+        opus_model_name: provider.opus_model_name.clone(),
+        extra_config,
+        auth_config,
+        token_configured: api_key.is_some(),
+    })
+}
+
 fn custom_provider_summaries(
     tool: &str,
     providers: &[AgentCustomProvider],
@@ -1354,6 +1791,16 @@ fn custom_provider_summaries(
     providers
         .iter()
         .filter_map(|provider| summarize_custom_provider(tool, provider).ok())
+        .collect()
+}
+
+fn builtin_provider_summaries(
+    tool: &str,
+    providers: &[AgentBuiltInProvider],
+) -> Vec<AgentBuiltInProviderSummary> {
+    providers
+        .iter()
+        .filter_map(|provider| summarize_builtin_provider(tool, provider).ok())
         .collect()
 }
 
@@ -1424,6 +1871,19 @@ fn normalize_full_config(tool: &str, full_config: Option<&str>) -> Result<Option
     }
 }
 
+fn normalize_agent_auth_config(
+    tool: &str,
+    auth_config: Option<&str>,
+) -> Result<Option<String>, String> {
+    if tool != "codex" {
+        return Ok(None);
+    }
+    let Some(auth_config) = clean_optional_text(auth_config) else {
+        return Ok(None);
+    };
+    stringify_codex_auth_config(parse_codex_auth_config(&auth_config)?).map(Some)
+}
+
 fn parse_claude_full_config(full_config: &str) -> Result<Value, String> {
     let value = serde_json::from_str::<Value>(full_config)
         .map_err(|e| format!("Claude config must be a JSON object: {e}"))?;
@@ -1486,6 +1946,14 @@ fn clean_codex_token(value: Option<String>) -> Option<String> {
     value
         .and_then(|value| clean_optional_text(Some(value.as_str())))
         .filter(|value| value != CODEX_TOKEN_PLACEHOLDER)
+}
+
+fn clean_agent_api_key(tool: &str, value: Option<&str>) -> Option<String> {
+    clean_optional_text(value).filter(|value| match tool {
+        "claude" => value != CLAUDE_TOKEN_PLACEHOLDER,
+        "codex" => value != CODEX_TOKEN_PLACEHOLDER,
+        _ => true,
+    })
 }
 
 fn current_agent_api_key(home: &Path, tool: &str, custom_id: Option<&str>) -> Option<String> {
@@ -1766,6 +2234,7 @@ fn claude_project_key(path: &str) -> String {
 fn read_claude_config_state(
     path: &Path,
     custom_providers: &[AgentCustomProvider],
+    built_in_providers: &[AgentBuiltInProvider],
 ) -> AgentToolConfigState {
     let exists = path.exists();
     let settings = fs::read_to_string(path)
@@ -1863,6 +2332,7 @@ fn read_claude_config_state(
         auth_config: None,
         api_key,
         token_configured,
+        built_in_providers: builtin_provider_summaries("claude", built_in_providers),
         custom_providers: custom_provider_summaries("claude", custom_providers),
     }
 }
@@ -1871,6 +2341,7 @@ fn read_codex_config_state(
     path: &Path,
     auth_path: &Path,
     custom_providers: &[AgentCustomProvider],
+    built_in_providers: &[AgentBuiltInProvider],
 ) -> AgentToolConfigState {
     let exists = path.exists();
     let text = fs::read_to_string(path).unwrap_or_default();
@@ -1940,6 +2411,7 @@ fn read_codex_config_state(
             .or_else(|| stringify_codex_auth_config(auth).ok()),
         api_key,
         token_configured,
+        built_in_providers: builtin_provider_summaries("codex", built_in_providers),
         custom_providers: custom_provider_summaries("codex", custom_providers),
     }
 }

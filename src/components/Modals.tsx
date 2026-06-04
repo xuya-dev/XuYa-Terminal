@@ -144,6 +144,23 @@ interface AgentCustomProviderSummary {
   tokenConfigured: boolean;
 }
 
+interface AgentBuiltInProviderSummary {
+  id: string;
+  baseUrl: string;
+  endpoint?: string | null;
+  apiKey?: string | null;
+  model?: string | null;
+  haikuModel?: string | null;
+  haikuModelName?: string | null;
+  sonnetModel?: string | null;
+  sonnetModelName?: string | null;
+  opusModel?: string | null;
+  opusModelName?: string | null;
+  extraConfig?: string | null;
+  authConfig?: string | null;
+  tokenConfigured: boolean;
+}
+
 interface AgentToolConfigState {
   path: string;
   exists: boolean;
@@ -163,6 +180,7 @@ interface AgentToolConfigState {
   authConfig?: string | null;
   apiKey?: string | null;
   tokenConfigured: boolean;
+  builtInProviders: AgentBuiltInProviderSummary[];
   customProviders: AgentCustomProviderSummary[];
 }
 
@@ -833,6 +851,64 @@ function sanitizeCodexAuthConfigForStorage(value: string) {
   }
 }
 
+function stringField(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function builtInProviderDraft(
+  tool: AgentTool,
+  provider: AgentProviderOption,
+  current: AgentDraft,
+  saved?: AgentBuiltInProviderSummary,
+) {
+  const next: AgentDraft = {
+    ...current,
+    providerId: provider.id,
+    customName: "",
+    baseUrl: stringField(saved?.baseUrl, provider.baseUrl),
+    apiKey: stringField(saved?.apiKey, ""),
+    model: stringField(saved?.model, provider.model ?? current.model),
+    haikuModel: stringField(
+      saved?.haikuModel,
+      roleModelFallback(provider, "haiku"),
+    ),
+    haikuModelName: stringField(
+      saved?.haikuModelName,
+      roleModelNameFallback(provider, "haiku"),
+    ),
+    sonnetModel: stringField(
+      saved?.sonnetModel,
+      roleModelFallback(provider, "sonnet"),
+    ),
+    sonnetModelName: stringField(
+      saved?.sonnetModelName,
+      roleModelNameFallback(provider, "sonnet"),
+    ),
+    opusModel: stringField(
+      saved?.opusModel,
+      roleModelFallback(provider, "opus"),
+    ),
+    opusModelName: stringField(
+      saved?.opusModelName,
+      roleModelNameFallback(provider, "opus"),
+    ),
+    extraConfig: stringField(saved?.extraConfig, ""),
+    authConfig: tool === "codex" ? stringField(saved?.authConfig, "") : "",
+  };
+  return {
+    ...next,
+    extraConfig: next.extraConfig.trim()
+      ? next.extraConfig
+      : buildAgentFullConfig(tool, next, current.extraConfig),
+    authConfig:
+      tool === "codex"
+        ? next.authConfig.trim()
+          ? next.authConfig
+          : buildCodexAuthConfig(next, current.authConfig)
+        : "",
+  };
+}
+
 function defaultAgentDraft(tool: AgentTool): AgentDraft {
   const provider = providerOptionsFor(tool)[0];
   const draft = {
@@ -876,56 +952,56 @@ function loadAgentDraft(tool: AgentTool): AgentDraft {
       customName:
         typeof parsed.customName === "string" ? parsed.customName : "",
       baseUrl:
-        typeof parsed.baseUrl === "string" ? parsed.baseUrl : provider.baseUrl,
+        (typeof parsed.baseUrl === "string" ? parsed.baseUrl : provider.baseUrl),
       apiKey: "",
       model:
-        typeof parsed.model === "string"
+        (typeof parsed.model === "string"
           ? parsed.model
-          : (provider.model ?? ""),
+          : (provider.model ?? "")),
       haikuModel:
-        typeof parsed.haikuModel === "string"
+        (typeof parsed.haikuModel === "string"
           ? parsed.haikuModel
-          : roleModelFallback(provider, "haiku"),
+          : roleModelFallback(provider, "haiku")),
       haikuModelName:
-        typeof parsed.haikuModelName === "string"
+        (typeof parsed.haikuModelName === "string"
           ? parsed.haikuModelName
           : stripClaudeOneMMarker(
               typeof parsed.haikuModel === "string"
                 ? parsed.haikuModel
                 : roleModelFallback(provider, "haiku"),
-            ),
+            )),
       sonnetModel:
-        typeof parsed.sonnetModel === "string"
+        (typeof parsed.sonnetModel === "string"
           ? parsed.sonnetModel
-          : roleModelFallback(provider, "sonnet"),
+          : roleModelFallback(provider, "sonnet")),
       sonnetModelName:
-        typeof parsed.sonnetModelName === "string"
+        (typeof parsed.sonnetModelName === "string"
           ? parsed.sonnetModelName
           : stripClaudeOneMMarker(
               typeof parsed.sonnetModel === "string"
                 ? parsed.sonnetModel
                 : roleModelFallback(provider, "sonnet"),
-            ),
+            )),
       opusModel:
-        typeof parsed.opusModel === "string"
+        (typeof parsed.opusModel === "string"
           ? parsed.opusModel
-          : roleModelFallback(provider, "opus"),
+          : roleModelFallback(provider, "opus")),
       opusModelName:
-        typeof parsed.opusModelName === "string"
+        (typeof parsed.opusModelName === "string"
           ? parsed.opusModelName
           : stripClaudeOneMMarker(
               typeof parsed.opusModel === "string"
                 ? parsed.opusModel
                 : roleModelFallback(provider, "opus"),
-            ),
+            )),
       extraConfig:
-        typeof parsed.extraConfig === "string"
+        (typeof parsed.extraConfig === "string"
           ? sanitizeFullConfigForStorage(tool, parsed.extraConfig)
-          : "",
+          : ""),
       authConfig:
-        typeof parsed.authConfig === "string"
+        (typeof parsed.authConfig === "string"
           ? sanitizeCodexAuthConfigForStorage(parsed.authConfig)
-          : "",
+          : ""),
     };
     return {
       ...draft,
@@ -1026,12 +1102,36 @@ function findCustomProvider(
   return customProviders?.find((provider) => provider.id === id);
 }
 
+function findBuiltInProvider(
+  providerId: string,
+  builtInProviders?: AgentBuiltInProviderSummary[],
+) {
+  if (isCustomProviderId(providerId)) return undefined;
+  return builtInProviders?.find((provider) => provider.id === providerId);
+}
+
+function upsertBuiltInProviderSummary(
+  providers: AgentBuiltInProviderSummary[],
+  next: AgentBuiltInProviderSummary,
+) {
+  const index = providers.findIndex((provider) => provider.id === next.id);
+  if (index === -1) return [...providers, next];
+  return providers.map((provider, providerIndex) =>
+    providerIndex === index ? next : provider,
+  );
+}
+
 function draftFromConfigState(
   tool: AgentTool,
   config: AgentToolConfigState,
   current: AgentDraft,
 ) {
-  if (!config.activeProvider && !config.baseUrl && !config.extraConfig) {
+  if (
+    !config.activeProvider &&
+    !config.baseUrl &&
+    !config.extraConfig &&
+    config.builtInProviders.length === 0
+  ) {
     return current;
   }
 
@@ -1039,15 +1139,21 @@ function draftFromConfigState(
     resolveStateProviderId(tool, config.activeProvider) ?? current.providerId;
   const provider = findProvider(tool, providerId);
   const customProvider = findCustomProvider(providerId, config.customProviders);
+  const builtInProvider = findBuiltInProvider(
+    providerId,
+    config.builtInProviders,
+  );
   const model =
     customProvider?.model ??
     config.model ??
+    builtInProvider?.model ??
     provider.model ??
     current.model;
   const haikuModel =
     tool === "claude"
       ? customProvider?.haikuModel ??
         config.haikuModel ??
+        builtInProvider?.haikuModel ??
         roleModelFallback(provider, "haiku") ??
         current.haikuModel
       : current.haikuModel;
@@ -1055,6 +1161,7 @@ function draftFromConfigState(
     tool === "claude"
       ? customProvider?.sonnetModel ??
         config.sonnetModel ??
+        builtInProvider?.sonnetModel ??
         roleModelFallback(provider, "sonnet") ??
         current.sonnetModel
       : current.sonnetModel;
@@ -1062,6 +1169,7 @@ function draftFromConfigState(
     tool === "claude"
       ? customProvider?.opusModel ??
         config.opusModel ??
+        builtInProvider?.opusModel ??
         roleModelFallback(provider, "opus") ??
         current.opusModel
       : current.opusModel;
@@ -1073,14 +1181,19 @@ function draftFromConfigState(
       (tool === "codex" && providerId === "custom"
         ? inferCodexCustomName(config.extraConfig)
         : current.customName),
-    baseUrl: customProvider?.baseUrl ?? config.baseUrl ?? provider.baseUrl,
-    apiKey: customProvider?.apiKey ?? config.apiKey ?? "",
+    baseUrl:
+      customProvider?.baseUrl ??
+      config.baseUrl ??
+      builtInProvider?.baseUrl ??
+      provider.baseUrl,
+    apiKey: customProvider?.apiKey ?? config.apiKey ?? builtInProvider?.apiKey ?? "",
     model,
     haikuModel,
     haikuModelName:
       tool === "claude"
         ? customProvider?.haikuModelName ??
           config.haikuModelName ??
+          builtInProvider?.haikuModelName ??
           stripClaudeOneMMarker(haikuModel)
         : current.haikuModelName,
     sonnetModel,
@@ -1088,6 +1201,7 @@ function draftFromConfigState(
       tool === "claude"
         ? customProvider?.sonnetModelName ??
           config.sonnetModelName ??
+          builtInProvider?.sonnetModelName ??
           stripClaudeOneMMarker(sonnetModel)
         : current.sonnetModelName,
     opusModel,
@@ -1095,15 +1209,27 @@ function draftFromConfigState(
       tool === "claude"
         ? customProvider?.opusModelName ??
           config.opusModelName ??
+          builtInProvider?.opusModelName ??
           stripClaudeOneMMarker(opusModel)
         : current.opusModelName,
     extraConfig:
-      config.extraConfig ?? customProvider?.extraConfig ?? current.extraConfig,
+      config.extraConfig ??
+      customProvider?.extraConfig ??
+      builtInProvider?.extraConfig ??
+      current.extraConfig,
     authConfig:
       tool === "codex"
         ? config.authConfig ??
+          builtInProvider?.authConfig ??
           buildCodexAuthConfig(
-            { ...current, apiKey: customProvider?.apiKey ?? config.apiKey ?? "" },
+            {
+              ...current,
+              apiKey:
+                customProvider?.apiKey ??
+                config.apiKey ??
+                builtInProvider?.apiKey ??
+                "",
+            },
             current.authConfig,
           )
         : "",
@@ -1325,6 +1451,7 @@ function AgentConfigSettings() {
   const [saving, setSaving] = useState<AgentTool | null>(null);
   const [message, setMessage] = useState<AgentConfigMessage | null>(null);
   const [activeAgent, setActiveAgent] = useState<AgentTool>("claude");
+  const skipNextStateHydrationRef = useRef(false);
   const [claudeDraft, setClaudeDraft] = useState<AgentDraft>(() =>
     loadAgentDraft("claude"),
   );
@@ -1373,6 +1500,10 @@ function AgentConfigSettings() {
 
   useEffect(() => {
     if (!state) return;
+    if (skipNextStateHydrationRef.current) {
+      skipNextStateHydrationRef.current = false;
+      return;
+    }
 
     setClaudeDraft((current) =>
       draftFromConfigState("claude", state.claude, current),
@@ -1509,6 +1640,81 @@ function AgentConfigSettings() {
     }
   };
 
+  const saveBuiltInProvider = async (
+    tool: AgentTool,
+    draft: AgentDraft,
+  ) => {
+    const provider = findProvider(tool, draft.providerId);
+    if (isCustomProviderId(draft.providerId) || provider.id === "custom") {
+      setMessage({ tone: "error", text: "自定义厂商请使用自定义保存。" });
+      return;
+    }
+    if (provider.id !== "official" && !draft.apiKey.trim()) {
+      setMessage({ tone: "error", text: "请先填写 API Key。" });
+      return;
+    }
+
+    setSaving(tool);
+    setMessage({ tone: "info", text: "正在保存内置厂商..." });
+    try {
+      const draftToSave = {
+        ...draft,
+        extraConfig: buildAgentFullConfig(tool, draft, draft.extraConfig),
+        authConfig:
+          tool === "codex"
+            ? buildCodexAuthConfig(draft, draft.authConfig)
+            : "",
+      };
+      const saved = await invoke<AgentBuiltInProviderSummary>(
+        "save_agent_builtin_provider",
+        {
+          request: {
+            tool,
+            providerId: provider.id,
+            baseUrl: draftToSave.baseUrl,
+            apiKey: draftToSave.apiKey,
+            model: draftToSave.model,
+            haikuModel: draftToSave.haikuModel,
+            haikuModelName: draftToSave.haikuModelName,
+            sonnetModel: draftToSave.sonnetModel,
+            sonnetModelName: draftToSave.sonnetModelName,
+            opusModel: draftToSave.opusModel,
+            opusModelName: draftToSave.opusModelName,
+            extraConfig: draftToSave.extraConfig,
+            authConfig: draftToSave.authConfig,
+          },
+        },
+      );
+      const nextDraft = builtInProviderDraft(tool, provider, draftToSave, saved);
+      updateDraftForTool(tool, nextDraft);
+      setState((current) => {
+        if (!current) return current;
+        skipNextStateHydrationRef.current = true;
+        return {
+          ...current,
+          [tool]: {
+            ...current[tool],
+            builtInProviders: upsertBuiltInProviderSummary(
+              current[tool].builtInProviders,
+              saved,
+            ),
+          },
+        };
+      });
+      setMessage({
+        tone: "success",
+        text: `${provider.label} 已保存，当前使用配置未切换。`,
+      });
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const deleteCustomProvider = async (tool: AgentTool, providerId: string) => {
     const target = findCustomProvider(
       providerId,
@@ -1606,6 +1812,10 @@ function AgentConfigSettings() {
         nextDraft.providerId,
         currentState?.customProviders,
       );
+      const storedBuiltIn = findBuiltInProvider(
+        nextDraft.providerId,
+        currentState?.builtInProviders,
+      );
       if (!nextDraft.baseUrl.trim()) {
         setMessage({ tone: "error", text: "请先填写服务端点。" });
         return;
@@ -1614,6 +1824,7 @@ function AgentConfigSettings() {
         !nextDraft.apiKey.trim() &&
         !currentState?.tokenConfigured &&
         !storedCustom?.tokenConfigured &&
+        !storedBuiltIn?.tokenConfigured &&
         !savedCustom?.tokenConfigured
       ) {
         setMessage({ tone: "error", text: "请先填写 API Key。" });
@@ -1752,6 +1963,7 @@ function AgentConfigSettings() {
             saving={saving === "claude"}
             onDraftChange={setClaudeDraft}
             onSaveCustom={() => void saveCustomProvider("claude", claudeDraft)}
+            onSaveBuiltIn={() => saveBuiltInProvider("claude", claudeDraft)}
             onLoadCurrent={() => void loadState({ hydrateTool: "claude" })}
             onDeleteCustom={(providerId) =>
               void deleteCustomProvider("claude", providerId)
@@ -1775,6 +1987,7 @@ function AgentConfigSettings() {
             saving={saving === "codex"}
             onDraftChange={setCodexDraft}
             onSaveCustom={() => void saveCustomProvider("codex", codexDraft)}
+            onSaveBuiltIn={() => saveBuiltInProvider("codex", codexDraft)}
             onLoadCurrent={() => void loadState({ hydrateTool: "codex" })}
             onDeleteCustom={(providerId) =>
               void deleteCustomProvider("codex", providerId)
@@ -1816,6 +2029,7 @@ function AgentConfigCard({
   saving,
   onDraftChange,
   onSaveCustom,
+  onSaveBuiltIn,
   onLoadCurrent,
   onDeleteCustom,
   onApply,
@@ -1833,6 +2047,7 @@ function AgentConfigCard({
   saving: boolean;
   onDraftChange: (draft: AgentDraft) => void;
   onSaveCustom: () => void;
+  onSaveBuiltIn: () => void;
   onLoadCurrent: () => void;
   onDeleteCustom: (providerId: string) => void;
   onApply: (draftOverride?: AgentDraft) => void;
@@ -1841,7 +2056,12 @@ function AgentConfigCard({
   const usesCustom = isCustomProviderId(draft.providerId);
   const usesOfficial = !usesCustom && activeProvider.id === "official";
   const customProviders = state?.customProviders ?? [];
+  const savedBuiltInProviders = state?.builtInProviders ?? [];
   const selectedCustom = findCustomProvider(draft.providerId, customProviders);
+  const selectedBuiltIn = findBuiltInProvider(
+    activeProvider.id,
+    savedBuiltInProviders,
+  );
   const builtInProviders = providers.filter((provider) => provider.id !== "custom");
   const currentProviderId = resolveStateProviderId(tool, state?.activeProvider);
   const endpoint = endpointPreview(tool, draft.baseUrl);
@@ -1879,8 +2099,9 @@ function AgentConfigCard({
     ? Boolean(selectedCustom?.tokenConfigured)
     : Boolean(
         !usesOfficial &&
-          state?.tokenConfigured &&
-          isSameAgentBaseUrl(tool, draft.baseUrl, state.baseUrl),
+          (selectedBuiltIn?.tokenConfigured ||
+            (state?.tokenConfigured &&
+              isSameAgentBaseUrl(tool, draft.baseUrl, state.baseUrl))),
       );
   const apiKeyPlaceholder = usesOfficial
     ? "官方登录无需填写"
@@ -1910,19 +2131,13 @@ function AgentConfigCard({
     const provider = findProvider(tool, providerId);
     setFetchedModels([]);
     setModelFetchMessage(null);
-    updateDraft({
-      providerId: provider.id,
-      customName: "",
-      baseUrl: provider.baseUrl,
-      apiKey: "",
-      model: provider.model ?? draft.model,
-      haikuModel: roleModelFallback(provider, "haiku"),
-      haikuModelName: roleModelNameFallback(provider, "haiku"),
-      sonnetModel: roleModelFallback(provider, "sonnet"),
-      sonnetModelName: roleModelNameFallback(provider, "sonnet"),
-      opusModel: roleModelFallback(provider, "opus"),
-      opusModelName: roleModelNameFallback(provider, "opus"),
-    });
+    const next = builtInProviderDraft(
+      tool,
+      provider,
+      draft,
+      findBuiltInProvider(provider.id, savedBuiltInProviders),
+    );
+    onDraftChange(next);
   };
 
   const handleNewCustom = () => {
@@ -2082,28 +2297,12 @@ function AgentConfigCard({
 
   const buildBuiltInProviderDraft = (provider: AgentProviderOption) => {
     if (!usesCustom && provider.id === activeProvider.id) return draft;
-    const nextDraft = {
-      ...draft,
-      providerId: provider.id,
-      customName: "",
-      baseUrl: provider.baseUrl,
-      apiKey: "",
-      model: provider.model ?? draft.model,
-      haikuModel: roleModelFallback(provider, "haiku"),
-      haikuModelName: roleModelNameFallback(provider, "haiku"),
-      sonnetModel: roleModelFallback(provider, "sonnet"),
-      sonnetModelName: roleModelNameFallback(provider, "sonnet"),
-      opusModel: roleModelFallback(provider, "opus"),
-      opusModelName: roleModelNameFallback(provider, "opus"),
-    };
-    return {
-      ...nextDraft,
-      extraConfig: buildAgentFullConfig(tool, nextDraft, draft.extraConfig),
-      authConfig:
-        tool === "codex"
-          ? buildCodexAuthConfig(nextDraft, draft.authConfig)
-          : "",
-    };
+    return builtInProviderDraft(
+      tool,
+      provider,
+      draft,
+      findBuiltInProvider(provider.id, savedBuiltInProviders),
+    );
   };
 
   const buildSavedCustomProviderDraft = (
@@ -2211,11 +2410,16 @@ function AgentConfigCard({
           const isActive = !usesCustom && provider.id === activeProvider.id;
           const isCurrent = currentProviderId === provider.id;
           const targetDraft = buildBuiltInProviderDraft(provider);
+          const savedBuiltIn = findBuiltInProvider(
+            provider.id,
+            savedBuiltInProviders,
+          );
           const tokenConfigured =
             provider.id !== "official" &&
             Boolean(
-              state?.tokenConfigured &&
-                isSameAgentBaseUrl(tool, targetDraft.baseUrl, state.baseUrl),
+              savedBuiltIn?.tokenConfigured ||
+                (state?.tokenConfigured &&
+                  isSameAgentBaseUrl(tool, targetDraft.baseUrl, state.baseUrl)),
             );
           return (
             <div
@@ -2756,12 +2960,12 @@ function AgentConfigCard({
                 }
                 title={
                   canApplyProvider(draft, selectedProviderTokenConfigured)
-                    ? "保存当前内置厂商配置"
+                    ? "保存当前内置厂商表单，不切换使用中配置"
                     : "请先填写 API Key"
                 }
-                onClick={() => onApply(draft)}
+                onClick={onSaveBuiltIn}
               >
-                {applying ? (
+                {saving ? (
                   <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
                 ) : (
                   <Save size={13} strokeWidth={1.8} />

@@ -24,6 +24,7 @@ fn main() {
             commands::get_agent_config_state,
             commands::apply_agent_provider_config,
             commands::save_agent_custom_provider,
+            commands::save_agent_builtin_provider,
             commands::delete_agent_custom_provider,
             commands::fetch_agent_provider_models,
         ])
