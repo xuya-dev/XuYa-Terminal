@@ -2585,15 +2585,95 @@ body,
   border-radius: var(--xy-radius-sm);
 }
 
+.xy-agent-role-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .xy-agent-role-title {
   color: var(--xy-fg-faint);
   font-size: 11px;
+  font-weight: 720;
 }
 
-.xy-agent-role-grid {
+.xy-agent-role-head small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--xy-fg-faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xy-agent-role-table {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.xy-agent-role-table-head,
+.xy-agent-role-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: 76px minmax(0, 1fr) minmax(0, 1fr) 64px;
+  align-items: end;
+  gap: 7px;
+}
+
+.xy-agent-role-table-head {
+  padding: 0 6px;
+  color: var(--xy-fg-faint);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.xy-agent-role-label {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  background: var(--xy-surface-sunken);
+  border: 1px solid var(--xy-border);
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg-muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.xy-field--role > span {
+  display: none !important;
+}
+
+.xy-agent-one-m {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--xy-surface);
+  border: 1px solid var(--xy-border);
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 720;
+  user-select: none;
+}
+
+.xy-agent-one-m input {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--xy-accent);
+  cursor: pointer;
+}
+
+.xy-agent-one-m.is-active {
+  background: var(--xy-accent-soft);
+  border-color: color-mix(in srgb, var(--xy-accent) 42%, var(--xy-border));
+  color: var(--xy-accent-soft-fg);
 }
 
 .xy-field input:disabled,
@@ -3057,8 +3137,35 @@ body,
     justify-content: flex-start;
   }
 
-  .xy-agent-role-grid {
+  .xy-agent-role-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .xy-agent-role-head small {
+    white-space: normal;
+  }
+
+  .xy-agent-role-table-head {
+    display: none;
+  }
+
+  .xy-agent-role-row {
     grid-template-columns: 1fr;
+    padding: 7px;
+    background: var(--xy-surface-sunken);
+    border: 1px solid var(--xy-border);
+    border-radius: var(--xy-radius-sm);
+  }
+
+  .xy-agent-role-label,
+  .xy-agent-one-m {
+    justify-content: flex-start;
+    padding: 0 10px;
+  }
+
+  .xy-field--role > span {
+    display: inline-flex !important;
   }
 }
 

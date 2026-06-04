@@ -100,11 +100,16 @@ interface AgentProviderOption {
   baseUrl: string;
   model?: string;
   haikuModel?: string;
+  haikuModelName?: string;
   sonnetModel?: string;
+  sonnetModelName?: string;
   opusModel?: string;
+  opusModelName?: string;
   color: string;
   icon: ReactNode;
 }
+
+type ClaudeRole = "opus" | "sonnet" | "haiku";
 
 interface AgentDraft {
   providerId: string;
@@ -113,8 +118,11 @@ interface AgentDraft {
   apiKey: string;
   model: string;
   haikuModel: string;
+  haikuModelName: string;
   sonnetModel: string;
+  sonnetModelName: string;
   opusModel: string;
+  opusModelName: string;
   extraConfig: string;
   authConfig: string;
 }
@@ -127,8 +135,11 @@ interface AgentCustomProviderSummary {
   apiKey?: string | null;
   model?: string | null;
   haikuModel?: string | null;
+  haikuModelName?: string | null;
   sonnetModel?: string | null;
+  sonnetModelName?: string | null;
   opusModel?: string | null;
+  opusModelName?: string | null;
   extraConfig?: string | null;
   tokenConfigured: boolean;
 }
@@ -141,8 +152,11 @@ interface AgentToolConfigState {
   endpoint?: string | null;
   model?: string | null;
   haikuModel?: string | null;
+  haikuModelName?: string | null;
   sonnetModel?: string | null;
+  sonnetModelName?: string | null;
   opusModel?: string | null;
+  opusModelName?: string | null;
   extraConfig?: string | null;
   authPath?: string | null;
   authExists: boolean;
@@ -384,7 +398,7 @@ function defaultCustomModel(tool: AgentTool) {
   return tool === "codex" ? CODEX_DEFAULT_MODEL : "";
 }
 
-function roleModelFallback(provider: AgentProviderOption, role: "haiku" | "sonnet" | "opus") {
+function roleModelFallback(provider: AgentProviderOption, role: ClaudeRole) {
   if (role === "haiku") return provider.haikuModel ?? provider.model ?? "";
   if (role === "sonnet") return provider.sonnetModel ?? provider.model ?? "";
   return provider.opusModel ?? provider.model ?? "";
@@ -392,6 +406,63 @@ function roleModelFallback(provider: AgentProviderOption, role: "haiku" | "sonne
 
 const CLAUDE_TOKEN_PLACEHOLDER = "${ANTHROPIC_AUTH_TOKEN}";
 const CODEX_TOKEN_PLACEHOLDER = "${CODEX_API_KEY}";
+const CLAUDE_ONE_M_MARKER = "[1M]";
+
+const CLAUDE_ROLE_ROWS: {
+  role: ClaudeRole;
+  label: string;
+  modelKey: "opusModel" | "sonnetModel" | "haikuModel";
+  nameKey: "opusModelName" | "sonnetModelName" | "haikuModelName";
+  placeholder: string;
+}[] = [
+  {
+    role: "opus",
+    label: "Opus",
+    modelKey: "opusModel",
+    nameKey: "opusModelName",
+    placeholder: "claude-opus / deepseek-v4-pro",
+  },
+  {
+    role: "sonnet",
+    label: "Sonnet",
+    modelKey: "sonnetModel",
+    nameKey: "sonnetModelName",
+    placeholder: "claude-sonnet / deepseek-v4-pro",
+  },
+  {
+    role: "haiku",
+    label: "Haiku",
+    modelKey: "haikuModel",
+    nameKey: "haikuModelName",
+    placeholder: "claude-haiku / deepseek-v4-flash",
+  },
+];
+
+function hasClaudeOneMMarker(model: string) {
+  return model.trimEnd().toLowerCase().endsWith("[1m]");
+}
+
+function stripClaudeOneMMarker(model: string) {
+  const trimmedEnd = model.trimEnd();
+  if (!trimmedEnd.toLowerCase().endsWith("[1m]")) return model;
+  return trimmedEnd.slice(0, -CLAUDE_ONE_M_MARKER.length).trimEnd();
+}
+
+function setClaudeOneMMarker(model: string, enabled: boolean) {
+  const base = stripClaudeOneMMarker(model).trim();
+  if (!base) return "";
+  return enabled ? `${base}${CLAUDE_ONE_M_MARKER}` : base;
+}
+
+function roleModelNameFallback(provider: AgentProviderOption, role: ClaudeRole) {
+  if (role === "haiku") {
+    return provider.haikuModelName ?? stripClaudeOneMMarker(roleModelFallback(provider, role));
+  }
+  if (role === "sonnet") {
+    return provider.sonnetModelName ?? stripClaudeOneMMarker(roleModelFallback(provider, role));
+  }
+  return provider.opusModelName ?? stripClaudeOneMMarker(roleModelFallback(provider, role));
+}
 
 const CODEX_MANAGED_TOP_LEVEL_KEYS = new Set([
   "base_url",
@@ -458,8 +529,11 @@ function buildClaudeFullConfig(draft: AgentDraft, baseConfig?: string) {
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_MODEL;
   delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+  delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME;
   delete env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+  delete env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME;
   delete env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+  delete env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME;
 
   if (!usesOfficial && draft.baseUrl.trim()) {
     env.ANTHROPIC_BASE_URL = normalizeClaudeBaseUrlForPreview(draft.baseUrl);
@@ -470,11 +544,20 @@ function buildClaudeFullConfig(draft: AgentDraft, baseConfig?: string) {
   if (draft.haikuModel.trim()) {
     env.ANTHROPIC_DEFAULT_HAIKU_MODEL = draft.haikuModel.trim();
   }
+  if (draft.haikuModelName.trim()) {
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = draft.haikuModelName.trim();
+  }
   if (draft.sonnetModel.trim()) {
     env.ANTHROPIC_DEFAULT_SONNET_MODEL = draft.sonnetModel.trim();
   }
+  if (draft.sonnetModelName.trim()) {
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = draft.sonnetModelName.trim();
+  }
   if (draft.opusModel.trim()) {
     env.ANTHROPIC_DEFAULT_OPUS_MODEL = draft.opusModel.trim();
+  }
+  if (draft.opusModelName.trim()) {
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = draft.opusModelName.trim();
   }
 
   const next = { ...config };
@@ -762,8 +845,11 @@ function defaultAgentDraft(tool: AgentTool): AgentDraft {
     apiKey: "",
     model: provider.model ?? "",
     haikuModel: roleModelFallback(provider, "haiku"),
+    haikuModelName: roleModelNameFallback(provider, "haiku"),
     sonnetModel: roleModelFallback(provider, "sonnet"),
+    sonnetModelName: roleModelNameFallback(provider, "sonnet"),
     opusModel: roleModelFallback(provider, "opus"),
+    opusModelName: roleModelNameFallback(provider, "opus"),
     extraConfig: "",
     authConfig: "",
   };
@@ -803,14 +889,38 @@ function loadAgentDraft(tool: AgentTool): AgentDraft {
         typeof parsed.haikuModel === "string"
           ? parsed.haikuModel
           : roleModelFallback(provider, "haiku"),
+      haikuModelName:
+        typeof parsed.haikuModelName === "string"
+          ? parsed.haikuModelName
+          : stripClaudeOneMMarker(
+              typeof parsed.haikuModel === "string"
+                ? parsed.haikuModel
+                : roleModelFallback(provider, "haiku"),
+            ),
       sonnetModel:
         typeof parsed.sonnetModel === "string"
           ? parsed.sonnetModel
           : roleModelFallback(provider, "sonnet"),
+      sonnetModelName:
+        typeof parsed.sonnetModelName === "string"
+          ? parsed.sonnetModelName
+          : stripClaudeOneMMarker(
+              typeof parsed.sonnetModel === "string"
+                ? parsed.sonnetModel
+                : roleModelFallback(provider, "sonnet"),
+            ),
       opusModel:
         typeof parsed.opusModel === "string"
           ? parsed.opusModel
           : roleModelFallback(provider, "opus"),
+      opusModelName:
+        typeof parsed.opusModelName === "string"
+          ? parsed.opusModelName
+          : stripClaudeOneMMarker(
+              typeof parsed.opusModel === "string"
+                ? parsed.opusModel
+                : roleModelFallback(provider, "opus"),
+            ),
       extraConfig:
         typeof parsed.extraConfig === "string"
           ? sanitizeFullConfigForStorage(tool, parsed.extraConfig)
@@ -846,8 +956,11 @@ function persistAgentDraft(tool: AgentTool, draft: AgentDraft) {
       baseUrl: draft.baseUrl,
       model: draft.model,
       haikuModel: draft.haikuModel,
+      haikuModelName: draft.haikuModelName,
       sonnetModel: draft.sonnetModel,
+      sonnetModelName: draft.sonnetModelName,
       opusModel: draft.opusModel,
+      opusModelName: draft.opusModelName,
       extraConfig: sanitizeFullConfigForStorage(tool, draft.extraConfig),
       authConfig:
         tool === "codex"
@@ -929,6 +1042,32 @@ function draftFromConfigState(
     resolveStateProviderId(tool, config.activeProvider) ?? current.providerId;
   const provider = findProvider(tool, providerId);
   const customProvider = findCustomProvider(providerId, config.customProviders);
+  const model =
+    customProvider?.model ??
+    config.model ??
+    provider.model ??
+    current.model;
+  const haikuModel =
+    tool === "claude"
+      ? customProvider?.haikuModel ??
+        config.haikuModel ??
+        roleModelFallback(provider, "haiku") ??
+        current.haikuModel
+      : current.haikuModel;
+  const sonnetModel =
+    tool === "claude"
+      ? customProvider?.sonnetModel ??
+        config.sonnetModel ??
+        roleModelFallback(provider, "sonnet") ??
+        current.sonnetModel
+      : current.sonnetModel;
+  const opusModel =
+    tool === "claude"
+      ? customProvider?.opusModel ??
+        config.opusModel ??
+        roleModelFallback(provider, "opus") ??
+        current.opusModel
+      : current.opusModel;
   const next: AgentDraft = {
     ...current,
     providerId,
@@ -939,32 +1078,28 @@ function draftFromConfigState(
         : current.customName),
     baseUrl: customProvider?.baseUrl ?? config.baseUrl ?? provider.baseUrl,
     apiKey: customProvider?.apiKey ?? config.apiKey ?? "",
-    model:
-      customProvider?.model ??
-      config.model ??
-      provider.model ??
-      current.model,
-    haikuModel:
+    model,
+    haikuModel,
+    haikuModelName:
       tool === "claude"
-        ? customProvider?.haikuModel ??
-          config.haikuModel ??
-          roleModelFallback(provider, "haiku") ??
-          current.haikuModel
-        : current.haikuModel,
-    sonnetModel:
+        ? customProvider?.haikuModelName ??
+          config.haikuModelName ??
+          stripClaudeOneMMarker(haikuModel)
+        : current.haikuModelName,
+    sonnetModel,
+    sonnetModelName:
       tool === "claude"
-        ? customProvider?.sonnetModel ??
-          config.sonnetModel ??
-          roleModelFallback(provider, "sonnet") ??
-          current.sonnetModel
-        : current.sonnetModel,
-    opusModel:
+        ? customProvider?.sonnetModelName ??
+          config.sonnetModelName ??
+          stripClaudeOneMMarker(sonnetModel)
+        : current.sonnetModelName,
+    opusModel,
+    opusModelName:
       tool === "claude"
-        ? customProvider?.opusModel ??
-          config.opusModel ??
-          roleModelFallback(provider, "opus") ??
-          current.opusModel
-        : current.opusModel,
+        ? customProvider?.opusModelName ??
+          config.opusModelName ??
+          stripClaudeOneMMarker(opusModel)
+        : current.opusModelName,
     extraConfig:
       config.extraConfig ?? customProvider?.extraConfig ?? current.extraConfig,
     authConfig:
@@ -1311,8 +1446,11 @@ function AgentConfigSettings() {
             apiKey: draftToSave.apiKey,
             model: draftToSave.model,
             haikuModel: draftToSave.haikuModel,
+            haikuModelName: draftToSave.haikuModelName,
             sonnetModel: draftToSave.sonnetModel,
+            sonnetModelName: draftToSave.sonnetModelName,
             opusModel: draftToSave.opusModel,
+            opusModelName: draftToSave.opusModelName,
             extraConfig: draftToSave.extraConfig,
             authConfig: draftToSave.authConfig,
           },
@@ -1325,8 +1463,11 @@ function AgentConfigSettings() {
         apiKey: saved.apiKey ?? "",
         model: saved.model ?? defaultCustomModel(tool),
         haikuModel: saved.haikuModel ?? "",
+        haikuModelName: saved.haikuModelName ?? "",
         sonnetModel: saved.sonnetModel ?? "",
+        sonnetModelName: saved.sonnetModelName ?? "",
         opusModel: saved.opusModel ?? "",
+        opusModelName: saved.opusModelName ?? "",
         extraConfig: buildAgentFullConfig(
           tool,
           {
@@ -1337,8 +1478,11 @@ function AgentConfigSettings() {
             apiKey: saved.apiKey ?? draftToSave.apiKey,
             model: saved.model ?? defaultCustomModel(tool),
             haikuModel: saved.haikuModel ?? "",
+            haikuModelName: saved.haikuModelName ?? "",
             sonnetModel: saved.sonnetModel ?? "",
+            sonnetModelName: saved.sonnetModelName ?? "",
             opusModel: saved.opusModel ?? "",
+            opusModelName: saved.opusModelName ?? "",
             extraConfig: "",
             authConfig: draftToSave.authConfig,
           },
@@ -1423,8 +1567,11 @@ function AgentConfigSettings() {
           apiKey: saved.apiKey ?? "",
           model: saved.model ?? defaultCustomModel(tool),
           haikuModel: saved.haikuModel ?? "",
+          haikuModelName: saved.haikuModelName ?? "",
           sonnetModel: saved.sonnetModel ?? "",
+          sonnetModelName: saved.sonnetModelName ?? "",
           opusModel: saved.opusModel ?? "",
+          opusModelName: saved.opusModelName ?? "",
           extraConfig: buildAgentFullConfig(
             tool,
             {
@@ -1435,8 +1582,11 @@ function AgentConfigSettings() {
               apiKey: saved.apiKey ?? nextDraft.apiKey,
               model: saved.model ?? defaultCustomModel(tool),
               haikuModel: saved.haikuModel ?? "",
+              haikuModelName: saved.haikuModelName ?? "",
               sonnetModel: saved.sonnetModel ?? "",
+              sonnetModelName: saved.sonnetModelName ?? "",
               opusModel: saved.opusModel ?? "",
+              opusModelName: saved.opusModelName ?? "",
               extraConfig: "",
               authConfig: nextDraft.authConfig,
             },
@@ -1487,8 +1637,11 @@ function AgentConfigSettings() {
             apiKey: nextDraft.apiKey,
             model: nextDraft.model,
             haikuModel: nextDraft.haikuModel,
+            haikuModelName: nextDraft.haikuModelName,
             sonnetModel: nextDraft.sonnetModel,
+            sonnetModelName: nextDraft.sonnetModelName,
             opusModel: nextDraft.opusModel,
+            opusModelName: nextDraft.opusModelName,
             extraConfig: nextDraft.extraConfig,
             authConfig: nextDraft.authConfig,
           },
@@ -1723,6 +1876,18 @@ function AgentConfigCard({
       : "请先填写 API Key";
   const showReadCurrentAction = draft.providerId === "custom";
   const showSaveCustomAction = usesCustom;
+  const selectedProviderTokenConfigured = usesCustom
+    ? Boolean(selectedCustom?.tokenConfigured)
+    : Boolean(
+        !usesOfficial &&
+          state?.tokenConfigured &&
+          isSameAgentBaseUrl(tool, draft.baseUrl, state.baseUrl),
+      );
+  const apiKeyPlaceholder = usesOfficial
+    ? "官方登录无需填写"
+    : selectedProviderTokenConfigured
+      ? "已配置，可直接使用或重新填写"
+      : "sk-...";
 
   const updateDraft = (
     patch: Partial<AgentDraft>,
@@ -1753,8 +1918,11 @@ function AgentConfigCard({
       apiKey: "",
       model: provider.model ?? draft.model,
       haikuModel: roleModelFallback(provider, "haiku"),
+      haikuModelName: roleModelNameFallback(provider, "haiku"),
       sonnetModel: roleModelFallback(provider, "sonnet"),
+      sonnetModelName: roleModelNameFallback(provider, "sonnet"),
       opusModel: roleModelFallback(provider, "opus"),
+      opusModelName: roleModelNameFallback(provider, "opus"),
     });
   };
 
@@ -1768,8 +1936,11 @@ function AgentConfigCard({
       apiKey: "",
       model: defaultCustomModel(tool),
       haikuModel: "",
+      haikuModelName: "",
       sonnetModel: "",
+      sonnetModelName: "",
       opusModel: "",
+      opusModelName: "",
     });
   };
 
@@ -1784,8 +1955,11 @@ function AgentConfigCard({
       apiKey: provider.apiKey ?? "",
       model: provider.model ?? defaultCustomModel(tool),
       haikuModel: provider.haikuModel ?? "",
+      haikuModelName: provider.haikuModelName ?? "",
       sonnetModel: provider.sonnetModel ?? "",
+      sonnetModelName: provider.sonnetModelName ?? "",
       opusModel: provider.opusModel ?? "",
+      opusModelName: provider.opusModelName ?? "",
       extraConfig: "",
       authConfig: draft.authConfig,
     };
@@ -1850,17 +2024,39 @@ function AgentConfigCard({
     }
   };
 
+  const updateClaudeRoleModel = (row: (typeof CLAUDE_ROLE_ROWS)[number], value: string) => {
+    const currentModel = draft[row.modelKey];
+    const keepsOneM = hasClaudeOneMMarker(currentModel);
+    const oldBase = stripClaudeOneMMarker(currentModel).trim();
+    const nextBase = stripClaudeOneMMarker(value).trim();
+    const currentName = draft[row.nameKey].trim();
+    const shouldSyncName = !currentName || currentName === oldBase;
+    const patch: Partial<AgentDraft> = {
+      [row.modelKey]: setClaudeOneMMarker(nextBase, keepsOneM),
+    };
+    if (shouldSyncName) {
+      patch[row.nameKey] = nextBase;
+    }
+    updateDraft(patch);
+  };
+
+  const updateClaudeRoleOneM = (
+    row: (typeof CLAUDE_ROLE_ROWS)[number],
+    enabled: boolean,
+  ) => {
+    updateDraft({
+      [row.modelKey]: setClaudeOneMMarker(draft[row.modelKey], enabled),
+    } as Partial<AgentDraft>);
+  };
+
   const applyFetchedModel = (
     modelId: string,
     target: "model" | "sonnetModel" | "opusModel" | "haikuModel" =
       tool === "claude" ? "opusModel" : "model",
   ) => {
-    if (target === "sonnetModel") {
-      updateDraft({ sonnetModel: modelId });
-    } else if (target === "opusModel") {
-      updateDraft({ opusModel: modelId });
-    } else if (target === "haikuModel") {
-      updateDraft({ haikuModel: modelId });
+    const roleRow = CLAUDE_ROLE_ROWS.find((row) => row.modelKey === target);
+    if (roleRow) {
+      updateClaudeRoleModel(roleRow, modelId);
     } else {
       updateDraft({ model: modelId });
     }
@@ -1895,8 +2091,11 @@ function AgentConfigCard({
       apiKey: "",
       model: provider.model ?? draft.model,
       haikuModel: roleModelFallback(provider, "haiku"),
+      haikuModelName: roleModelNameFallback(provider, "haiku"),
       sonnetModel: roleModelFallback(provider, "sonnet"),
+      sonnetModelName: roleModelNameFallback(provider, "sonnet"),
       opusModel: roleModelFallback(provider, "opus"),
+      opusModelName: roleModelNameFallback(provider, "opus"),
     };
     return {
       ...nextDraft,
@@ -1921,8 +2120,11 @@ function AgentConfigCard({
       apiKey: provider.apiKey ?? "",
       model: provider.model ?? defaultCustomModel(tool),
       haikuModel: provider.haikuModel ?? "",
+      haikuModelName: provider.haikuModelName ?? "",
       sonnetModel: provider.sonnetModel ?? "",
+      sonnetModelName: provider.sonnetModelName ?? "",
       opusModel: provider.opusModel ?? "",
+      opusModelName: provider.opusModelName ?? "",
       extraConfig: "",
       authConfig: draft.authConfig,
     };
@@ -1940,33 +2142,17 @@ function AgentConfigCard({
     };
   };
 
-  const buildNewCustomProviderDraft = () => {
-    if (draft.providerId === "custom") return draft;
-    const nextDraft = {
-      ...draft,
-      providerId: "custom",
-      customName: "",
-      baseUrl: "",
-      apiKey: "",
-      model: defaultCustomModel(tool),
-      haikuModel: "",
-      sonnetModel: "",
-      opusModel: "",
-    };
-    return {
-      ...nextDraft,
-      extraConfig: buildAgentFullConfig(tool, nextDraft, draft.extraConfig),
-      authConfig:
-        tool === "codex"
-          ? buildCodexAuthConfig(nextDraft, draft.authConfig)
-          : "",
-    };
-  };
+  const providerNeedsKey = (targetDraft: AgentDraft) =>
+    isCustomProviderId(targetDraft.providerId) ||
+    findProvider(tool, targetDraft.providerId).id !== "official";
 
-  const hasApplyKey = (
+  const canApplyProvider = (
     targetDraft: AgentDraft,
     tokenConfigured = false,
-  ) => targetDraft.apiKey.trim().length > 0 || tokenConfigured;
+  ) =>
+    !providerNeedsKey(targetDraft) ||
+    targetDraft.apiKey.trim().length > 0 ||
+    tokenConfigured;
 
   const handleProviderApply = (targetDraft: AgentDraft) => {
     onDraftChange(targetDraft);
@@ -1990,9 +2176,11 @@ function AgentConfigCard({
       <button
         className="xy-agent-provider-action is-accent"
         type="button"
-        disabled={applying || saving || !hasApplyKey(targetDraft, tokenConfigured)}
+        disabled={
+          applying || saving || !canApplyProvider(targetDraft, tokenConfigured)
+        }
         title={
-          hasApplyKey(targetDraft, tokenConfigured)
+          canApplyProvider(targetDraft, tokenConfigured)
             ? "应用当前厂商配置"
             : "请先填写 API Key"
         }
@@ -2007,8 +2195,6 @@ function AgentConfigCard({
       </button>
     </div>
   );
-
-  const newCustomDraft = buildNewCustomProviderDraft();
 
   return (
     <div className="xy-agent-card">
@@ -2025,6 +2211,12 @@ function AgentConfigCard({
         {builtInProviders.map((provider) => {
           const isActive = !usesCustom && provider.id === activeProvider.id;
           const targetDraft = buildBuiltInProviderDraft(provider);
+          const tokenConfigured =
+            provider.id !== "official" &&
+            Boolean(
+              state?.tokenConfigured &&
+                isSameAgentBaseUrl(tool, targetDraft.baseUrl, state.baseUrl),
+            );
           return (
             <div
               key={provider.id}
@@ -2045,7 +2237,7 @@ function AgentConfigCard({
                 <span className="xy-provider-icon">{provider.icon}</span>
                 <span className="xy-provider-label">{provider.label}</span>
               </button>
-              {renderProviderApplyAction({ targetDraft })}
+              {renderProviderApplyAction({ targetDraft, tokenConfigured })}
             </div>
           );
         })}
@@ -2122,7 +2314,6 @@ function AgentConfigCard({
             </span>
             <span className="xy-provider-label">新增自定义</span>
           </button>
-          {renderProviderApplyAction({ targetDraft: newCustomDraft })}
         </div>
       </div>
 
@@ -2168,21 +2359,13 @@ function AgentConfigCard({
               value={draft.apiKey}
               disabled={usesOfficial}
               type={showApiKey ? "text" : "password"}
-              placeholder={
-                usesCustom
-                  ? selectedCustom?.tokenConfigured
-                    ? "已保存，点击眼睛查看"
-                    : "sk-..."
-                  : state?.tokenConfigured
-                    ? "已配置，点击眼睛查看"
-                    : "sk-..."
-              }
+              placeholder={apiKeyPlaceholder}
               onChange={(e) => updateDraft({ apiKey: e.target.value })}
             />
             <button
               className="xy-agent-secret-toggle"
               type="button"
-              disabled={usesOfficial}
+              disabled={usesOfficial || !draft.apiKey.trim()}
               title={showApiKey ? "隐藏 API Key" : "查看 API Key"}
               aria-label={showApiKey ? "隐藏 API Key" : "查看 API Key"}
               onClick={() => setShowApiKey((value) => !value)}
@@ -2198,34 +2381,60 @@ function AgentConfigCard({
 
         {tool === "claude" ? (
           <div className="xy-agent-role-models xy-field--wide">
-            <span className="xy-agent-role-title">Claude 模型角色</span>
-            <div className="xy-agent-role-grid">
-              <label className="xy-field">
-                <span>Opus</span>
-                <input
-                  value={draft.opusModel}
-                  placeholder="claude-opus / deepseek-v4-pro"
-                  onChange={(e) => updateDraft({ opusModel: e.target.value })}
-                />
-              </label>
-              <label className="xy-field">
-                <span>Sonnet</span>
-                <input
-                  value={draft.sonnetModel}
-                  placeholder="claude-sonnet / deepseek-v4-pro"
-                  onChange={(e) =>
-                    updateDraft({ sonnetModel: e.target.value })
-                  }
-                />
-              </label>
-              <label className="xy-field">
-                <span>Haiku</span>
-                <input
-                  value={draft.haikuModel}
-                  placeholder="claude-haiku / deepseek-v4-flash"
-                  onChange={(e) => updateDraft({ haikuModel: e.target.value })}
-                />
-              </label>
+            <div className="xy-agent-role-head">
+              <span className="xy-agent-role-title">Claude 模型角色</span>
+              <small>显示名称用于 /model 菜单，1M 会写入模型值后缀</small>
+            </div>
+            <div className="xy-agent-role-table">
+              <div className="xy-agent-role-table-head" aria-hidden="true">
+                <span>角色</span>
+                <span>模型名称</span>
+                <span>实际请求模型</span>
+                <span>1M</span>
+              </div>
+              {CLAUDE_ROLE_ROWS.map((row) => {
+                const modelBase = stripClaudeOneMMarker(draft[row.modelKey]);
+                const hasOneM = hasClaudeOneMMarker(draft[row.modelKey]);
+                return (
+                  <div className="xy-agent-role-row" key={row.role}>
+                    <span className="xy-agent-role-label">{row.label}</span>
+                    <label className="xy-field xy-field--role">
+                      <span>模型名称</span>
+                      <input
+                        value={draft[row.nameKey]}
+                        placeholder={modelBase || "显示在模型菜单中的名称"}
+                        onChange={(e) =>
+                          updateDraft({ [row.nameKey]: e.target.value } as Partial<AgentDraft>)
+                        }
+                      />
+                    </label>
+                    <label className="xy-field xy-field--role">
+                      <span>实际请求模型</span>
+                      <input
+                        value={modelBase}
+                        placeholder={row.placeholder}
+                        onChange={(e) =>
+                          updateClaudeRoleModel(row, e.target.value)
+                        }
+                      />
+                    </label>
+                    <label
+                      className={`xy-agent-one-m ${
+                        hasOneM ? "is-active" : ""
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={hasOneM}
+                        onChange={(e) =>
+                          updateClaudeRoleOneM(row, e.target.checked)
+                        }
+                      />
+                      <span>1M</span>
+                    </label>
+                  </div>
+                );
+              })}
             </div>
             <label className="xy-field">
               <span>兜底模型</span>
@@ -2467,7 +2676,7 @@ function AgentConfigCard({
                 value={draft.extraConfig}
                 rows={10}
                 spellCheck={false}
-                placeholder={`{\n  "env": {\n    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",\n    "ANTHROPIC_AUTH_TOKEN": "${draft.apiKey.trim() || "sk-ant-..."}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash"\n  }\n}`}
+                placeholder={`{\n  "env": {\n    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",\n    "ANTHROPIC_AUTH_TOKEN": "${draft.apiKey.trim() || "sk-ant-..."}",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "DeepSeek V4 Pro",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1M]",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "DeepSeek V4 Pro",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "DeepSeek V4 Flash"\n  }\n}`}
                 onChange={(e) =>
                   updateDraft(
                     { extraConfig: e.target.value },

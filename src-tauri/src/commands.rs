@@ -31,8 +31,11 @@ const CLAUDE_MANAGED_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
 ];
 
 const CODEX_MANAGED_TOP_LEVEL_KEYS: &[&str] = &[
@@ -76,8 +79,11 @@ pub struct AgentProviderConfigRequest {
     api_key: Option<String>,
     model: Option<String>,
     haiku_model: Option<String>,
+    haiku_model_name: Option<String>,
     sonnet_model: Option<String>,
+    sonnet_model_name: Option<String>,
     opus_model: Option<String>,
+    opus_model_name: Option<String>,
     extra_config: Option<String>,
     auth_config: Option<String>,
 }
@@ -92,8 +98,11 @@ pub struct AgentCustomProviderSaveRequest {
     api_key: Option<String>,
     model: Option<String>,
     haiku_model: Option<String>,
+    haiku_model_name: Option<String>,
     sonnet_model: Option<String>,
+    sonnet_model_name: Option<String>,
     opus_model: Option<String>,
+    opus_model_name: Option<String>,
     extra_config: Option<String>,
 }
 
@@ -118,9 +127,15 @@ struct AgentCustomProvider {
     #[serde(default)]
     haiku_model: Option<String>,
     #[serde(default)]
+    haiku_model_name: Option<String>,
+    #[serde(default)]
     sonnet_model: Option<String>,
     #[serde(default)]
+    sonnet_model_name: Option<String>,
+    #[serde(default)]
     opus_model: Option<String>,
+    #[serde(default)]
+    opus_model_name: Option<String>,
     #[serde(default)]
     extra_config: Option<String>,
 }
@@ -142,8 +157,11 @@ pub struct AgentCustomProviderSummary {
     api_key: Option<String>,
     model: Option<String>,
     haiku_model: Option<String>,
+    haiku_model_name: Option<String>,
     sonnet_model: Option<String>,
+    sonnet_model_name: Option<String>,
     opus_model: Option<String>,
+    opus_model_name: Option<String>,
     extra_config: Option<String>,
     token_configured: bool,
 }
@@ -158,8 +176,11 @@ pub struct AgentToolConfigState {
     endpoint: Option<String>,
     model: Option<String>,
     haiku_model: Option<String>,
+    haiku_model_name: Option<String>,
     sonnet_model: Option<String>,
+    sonnet_model_name: Option<String>,
     opus_model: Option<String>,
+    opus_model_name: Option<String>,
     extra_config: Option<String>,
     auth_path: Option<String>,
     auth_exists: bool,
@@ -434,8 +455,11 @@ fn save_agent_custom_provider_inner(
         .ok_or_else(|| "API Key is required for custom providers".to_string())?;
     let model = normalize_agent_model(tool, request.model.as_deref());
     let haiku_model = normalize_claude_role_model(tool, request.haiku_model.as_deref());
+    let haiku_model_name = normalize_claude_role_model(tool, request.haiku_model_name.as_deref());
     let sonnet_model = normalize_claude_role_model(tool, request.sonnet_model.as_deref());
+    let sonnet_model_name = normalize_claude_role_model(tool, request.sonnet_model_name.as_deref());
     let opus_model = normalize_claude_role_model(tool, request.opus_model.as_deref());
+    let opus_model_name = normalize_claude_role_model(tool, request.opus_model_name.as_deref());
     let extra_config = normalize_full_config(tool, request.extra_config.as_deref())?;
     let id = requested_id.unwrap_or_else(|| unique_custom_provider_id(&store.providers, &name));
 
@@ -446,8 +470,11 @@ fn save_agent_custom_provider_inner(
         api_key,
         model,
         haiku_model,
+        haiku_model_name,
         sonnet_model,
+        sonnet_model_name,
         opus_model,
+        opus_model_name,
         extra_config,
     };
 
@@ -603,6 +630,12 @@ fn apply_claude_provider_config(
                     .and_then(|provider| provider.haiku_model.clone())
             })
             .or_else(|| model.clone());
+        let haiku_model_name =
+            clean_optional_text(request.haiku_model_name.as_deref()).or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.haiku_model_name.clone())
+            });
         let sonnet_model = clean_optional_text(request.sonnet_model.as_deref())
             .or_else(|| {
                 stored_custom
@@ -610,6 +643,12 @@ fn apply_claude_provider_config(
                     .and_then(|provider| provider.sonnet_model.clone())
             })
             .or_else(|| model.clone());
+        let sonnet_model_name =
+            clean_optional_text(request.sonnet_model_name.as_deref()).or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.sonnet_model_name.clone())
+            });
         let opus_model = clean_optional_text(request.opus_model.as_deref())
             .or_else(|| {
                 stored_custom
@@ -617,6 +656,12 @@ fn apply_claude_provider_config(
                     .and_then(|provider| provider.opus_model.clone())
             })
             .or_else(|| model.clone());
+        let opus_model_name =
+            clean_optional_text(request.opus_model_name.as_deref()).or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.opus_model_name.clone())
+            });
 
         if let Some(model) = model {
             env.insert("ANTHROPIC_MODEL".to_string(), Value::String(model));
@@ -627,16 +672,34 @@ fn apply_claude_provider_config(
                 Value::String(model),
             );
         }
+        if let Some(model_name) = haiku_model_name {
+            env.insert(
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME".to_string(),
+                Value::String(model_name),
+            );
+        }
         if let Some(model) = sonnet_model {
             env.insert(
                 "ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(),
                 Value::String(model),
             );
         }
+        if let Some(model_name) = sonnet_model_name {
+            env.insert(
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME".to_string(),
+                Value::String(model_name),
+            );
+        }
         if let Some(model) = opus_model {
             env.insert(
                 "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
                 Value::String(model),
+            );
+        }
+        if let Some(model_name) = opus_model_name {
+            env.insert(
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME".to_string(),
+                Value::String(model_name),
             );
         }
 
@@ -1059,7 +1122,11 @@ fn read_custom_provider_store(home: &Path, tool: &str) -> Result<AgentCustomProv
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, name, base_url, api_key, model, haiku_model, sonnet_model, opus_model, extra_config
+            "SELECT id, name, base_url, api_key, model,
+                    haiku_model, haiku_model_name,
+                    sonnet_model, sonnet_model_name,
+                    opus_model, opus_model_name,
+                    extra_config
              FROM agent_providers
              WHERE tool = ?1
              ORDER BY name COLLATE NOCASE, id",
@@ -1074,9 +1141,12 @@ fn read_custom_provider_store(home: &Path, tool: &str) -> Result<AgentCustomProv
                 api_key: row.get(3)?,
                 model: row.get(4)?,
                 haiku_model: row.get(5)?,
-                sonnet_model: row.get(6)?,
-                opus_model: row.get(7)?,
-                extra_config: row.get(8)?,
+                haiku_model_name: row.get(6)?,
+                sonnet_model: row.get(7)?,
+                sonnet_model_name: row.get(8)?,
+                opus_model: row.get(9)?,
+                opus_model_name: row.get(10)?,
+                extra_config: row.get(11)?,
             })
         })
         .map_err(|e| format!("Failed to read custom providers: {e}"))?;
@@ -1102,8 +1172,12 @@ fn write_custom_provider_store(
     for provider in &store.providers {
         tx.execute(
             "INSERT INTO agent_providers (
-                tool, id, name, base_url, api_key, model, haiku_model, sonnet_model, opus_model, extra_config
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                tool, id, name, base_url, api_key, model,
+                haiku_model, haiku_model_name,
+                sonnet_model, sonnet_model_name,
+                opus_model, opus_model_name,
+                extra_config
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 tool,
                 provider.id,
@@ -1112,8 +1186,11 @@ fn write_custom_provider_store(
                 provider.api_key,
                 provider.model,
                 provider.haiku_model,
+                provider.haiku_model_name,
                 provider.sonnet_model,
+                provider.sonnet_model_name,
                 provider.opus_model,
+                provider.opus_model_name,
                 provider.extra_config,
             ],
         )
@@ -1140,15 +1217,43 @@ fn open_agent_provider_db(home: &Path) -> Result<Connection, String> {
             api_key TEXT NOT NULL DEFAULT '',
             model TEXT,
             haiku_model TEXT,
+            haiku_model_name TEXT,
             sonnet_model TEXT,
+            sonnet_model_name TEXT,
             opus_model TEXT,
+            opus_model_name TEXT,
             extra_config TEXT,
             updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
             PRIMARY KEY (tool, id)
         );",
     )
     .map_err(|e| format!("Failed to initialize provider database: {e}"))?;
+    ensure_agent_provider_columns(&conn)?;
     Ok(conn)
+}
+
+fn ensure_agent_provider_columns(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(agent_providers)")
+        .map_err(|e| format!("Failed to inspect provider database schema: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("Failed to read provider database schema: {e}"))?;
+    let mut columns = HashSet::new();
+    for row in rows {
+        columns.insert(row.map_err(|e| format!("Failed to decode provider column: {e}"))?);
+    }
+
+    for column in ["haiku_model_name", "sonnet_model_name", "opus_model_name"] {
+        if !columns.contains(column) {
+            conn.execute(
+                &format!("ALTER TABLE agent_providers ADD COLUMN {column} TEXT"),
+                [],
+            )
+            .map_err(|e| format!("Failed to add provider column {column}: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn migrate_legacy_provider_store(home: &Path, tool: &str, conn: &Connection) -> Result<(), String> {
@@ -1182,8 +1287,12 @@ fn migrate_legacy_provider_store(home: &Path, tool: &str, conn: &Connection) -> 
     for provider in store.providers {
         conn.execute(
             "INSERT OR IGNORE INTO agent_providers (
-                tool, id, name, base_url, api_key, model, haiku_model, sonnet_model, opus_model, extra_config
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                tool, id, name, base_url, api_key, model,
+                haiku_model, haiku_model_name,
+                sonnet_model, sonnet_model_name,
+                opus_model, opus_model_name,
+                extra_config
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 tool,
                 provider.id,
@@ -1192,8 +1301,11 @@ fn migrate_legacy_provider_store(home: &Path, tool: &str, conn: &Connection) -> 
                 provider.api_key,
                 provider.model,
                 provider.haiku_model,
+                provider.haiku_model_name,
                 provider.sonnet_model,
+                provider.sonnet_model_name,
                 provider.opus_model,
+                provider.opus_model_name,
                 provider.extra_config,
             ],
         )
@@ -1226,8 +1338,11 @@ fn summarize_custom_provider(
         api_key: clean_optional_text(Some(provider.api_key.as_str())),
         model: provider.model.clone(),
         haiku_model: provider.haiku_model.clone(),
+        haiku_model_name: provider.haiku_model_name.clone(),
         sonnet_model: provider.sonnet_model.clone(),
+        sonnet_model_name: provider.sonnet_model_name.clone(),
         opus_model: provider.opus_model.clone(),
+        opus_model_name: provider.opus_model_name.clone(),
         extra_config,
         token_configured: is_real_token(&provider.api_key, ""),
     })
@@ -1679,14 +1794,32 @@ fn read_claude_config_state(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let haiku_model_name = env
+        .and_then(|env| env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let sonnet_model = env
         .and_then(|env| env.get("ANTHROPIC_DEFAULT_SONNET_MODEL"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let sonnet_model_name = env
+        .and_then(|env| env.get("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let opus_model = env
         .and_then(|env| env.get("ANTHROPIC_DEFAULT_OPUS_MODEL"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let opus_model_name = env
+        .and_then(|env| env.get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1720,8 +1853,11 @@ fn read_claude_config_state(
         endpoint,
         model,
         haiku_model,
+        haiku_model_name,
         sonnet_model,
+        sonnet_model_name,
         opus_model,
+        opus_model_name,
         extra_config,
         auth_path: None,
         auth_exists: false,
@@ -1793,8 +1929,11 @@ fn read_codex_config_state(
         endpoint,
         model,
         haiku_model: None,
+        haiku_model_name: None,
         sonnet_model: None,
+        sonnet_model_name: None,
         opus_model: None,
+        opus_model_name: None,
         extra_config,
         auth_path: Some(path_to_string(auth_path)),
         auth_exists,
