@@ -2233,6 +2233,44 @@ body,
   gap: 4px;
 }
 
+.xy-agent-secret-input {
+  position: relative;
+  min-width: 0;
+}
+
+.xy-agent-secret-input input {
+  padding-right: 36px;
+}
+
+.xy-agent-secret-toggle {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg-faint);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: background 0.12s, color 0.12s;
+}
+
+.xy-agent-secret-toggle:hover {
+  background: var(--xy-surface-hover);
+  color: var(--xy-fg);
+}
+
+.xy-agent-secret-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .xy-field-head {
   display: flex;
   align-items: center;
@@ -2253,7 +2291,7 @@ body,
 }
 
 .xy-agent-config-editor--auth {
-  min-height: calc(6 * 1.45em + 16px);
+  min-height: calc(3 * 1.45em + 16px);
 }
 
 .xy-agent-config-stack {

@@ -28,6 +28,8 @@ import {
   ArrowUp,
   CheckCircle2,
   Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   Github,
   KeyRound,
@@ -1710,6 +1712,7 @@ function AgentConfigCard({
   const [activeDetail, setActiveDetail] = useState<"models" | "config" | null>(
     null,
   );
+  const [showApiKey, setShowApiKey] = useState(false);
 
   const updateDraft = (
     patch: Partial<AgentDraft>,
@@ -1983,21 +1986,37 @@ function AgentConfigCard({
             <KeyRound size={12} strokeWidth={1.8} />
             API Key
           </span>
-          <input
-            value={draft.apiKey}
-            disabled={usesOfficial}
-            type="text"
-            placeholder={
-              usesCustom
-                ? selectedCustom?.tokenConfigured
-                  ? "已保存，读取后明文显示"
-                  : "sk-..."
-                : state?.tokenConfigured
-                  ? "已配置，读取后明文显示"
-                  : "sk-..."
-            }
-            onChange={(e) => updateDraft({ apiKey: e.target.value })}
-          />
+          <div className="xy-agent-secret-input">
+            <input
+              value={draft.apiKey}
+              disabled={usesOfficial}
+              type={showApiKey ? "text" : "password"}
+              placeholder={
+                usesCustom
+                  ? selectedCustom?.tokenConfigured
+                    ? "已保存，点击眼睛查看"
+                    : "sk-..."
+                  : state?.tokenConfigured
+                    ? "已配置，点击眼睛查看"
+                    : "sk-..."
+              }
+              onChange={(e) => updateDraft({ apiKey: e.target.value })}
+            />
+            <button
+              className="xy-agent-secret-toggle"
+              type="button"
+              disabled={usesOfficial}
+              title={showApiKey ? "隐藏 API Key" : "查看 API Key"}
+              aria-label={showApiKey ? "隐藏 API Key" : "查看 API Key"}
+              onClick={() => setShowApiKey((value) => !value)}
+            >
+              {showApiKey ? (
+                <EyeOff size={13} strokeWidth={1.8} />
+              ) : (
+                <Eye size={13} strokeWidth={1.8} />
+              )}
+            </button>
+          </div>
         </label>
 
         {tool === "claude" ? (
@@ -2199,7 +2218,7 @@ function AgentConfigCard({
                 <textarea
                   className="xy-agent-config-editor xy-agent-config-editor--auth"
                   value={draft.authConfig}
-                  rows={6}
+                  rows={3}
                   spellCheck={false}
                   placeholder={`{\n  "OPENAI_API_KEY": "${draft.apiKey.trim() || "sk-..."}"\n}`}
                   onChange={(e) => {
