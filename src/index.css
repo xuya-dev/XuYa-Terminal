@@ -2239,34 +2239,56 @@ body,
 }
 
 .xy-agent-secret-input input {
-  padding-right: 36px;
+  appearance: none;
+  padding-right: 44px;
 }
 
-.xy-agent-secret-input input[type="password"]::-ms-clear,
-.xy-agent-secret-input input[type="password"]::-ms-reveal {
-  display: none;
+.xy-agent-secret-input input::-ms-clear,
+.xy-agent-secret-input input::-ms-reveal {
+  display: none !important;
   width: 0;
   height: 0;
+}
+
+.xy-agent-secret-input input::-webkit-credentials-auto-fill-button,
+.xy-agent-secret-input input::-webkit-contacts-auto-fill-button {
+  visibility: hidden;
+  display: none !important;
+  pointer-events: none;
+}
+
+.xy-agent-secret-input::after {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  z-index: 1;
+  width: 34px;
+  height: 24px;
+  background: var(--xy-surface);
+  border-radius: var(--xy-radius-sm);
+  content: "";
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .xy-agent-secret-toggle {
   position: absolute;
   top: 50%;
-  right: 5px;
+  right: 4px;
   display: inline-flex;
-  width: 26px;
+  width: 32px;
   height: 26px;
   align-items: center;
   justify-content: center;
   padding: 0;
-  background: transparent;
+  background: var(--xy-surface);
   border: none;
   border-radius: var(--xy-radius-sm);
   color: var(--xy-fg-faint);
   cursor: pointer;
   transform: translateY(-50%);
   transition: background 0.12s, color 0.12s;
-  z-index: 1;
+  z-index: 2;
 }
 
 .xy-agent-secret-toggle:hover {
