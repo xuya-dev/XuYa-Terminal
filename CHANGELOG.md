@@ -9,6 +9,8 @@
 - Claude Code 支持官方、ZhiPu GLM、MiniMax、Kimi、DeepSeek、XiaoMi Mimo 与自定义端点。
 - Codex 支持官方与自定义端点，并固定使用 Responses API 配置。
 - Claude Code 与 Codex 的自定义厂商支持保存多个条目，可在设置页快速切换、更新或删除。
+- Claude Code 配置支持分别设置 Sonnet、Opus、Haiku 三个角色模型，并新增自定义 JSON 参数片段。
+- Codex 配置新增自定义 TOML 参数片段，可追加常用运行参数。
 - 写入范围保持轻量：Claude Code 写入 `~/.claude/settings.json`，Codex 写入 `~/.codex/config.toml`。
 - 端点能力保持约束：Claude Code 仅展示 `/v1/messages`，Codex 仅展示 `/v1/responses`，不提供反代协议转换。
 

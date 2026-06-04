@@ -97,6 +97,9 @@ interface AgentProviderOption {
   label: string;
   baseUrl: string;
   model?: string;
+  haikuModel?: string;
+  sonnetModel?: string;
+  opusModel?: string;
   color: string;
   icon: ReactNode;
 }
@@ -107,6 +110,10 @@ interface AgentDraft {
   baseUrl: string;
   apiKey: string;
   model: string;
+  haikuModel: string;
+  sonnetModel: string;
+  opusModel: string;
+  extraConfig: string;
 }
 
 interface AgentCustomProviderSummary {
@@ -115,6 +122,10 @@ interface AgentCustomProviderSummary {
   baseUrl: string;
   endpoint: string;
   model?: string | null;
+  haikuModel?: string | null;
+  sonnetModel?: string | null;
+  opusModel?: string | null;
+  extraConfig?: string | null;
   tokenConfigured: boolean;
 }
 
@@ -125,6 +136,10 @@ interface AgentToolConfigState {
   baseUrl?: string | null;
   endpoint?: string | null;
   model?: string | null;
+  haikuModel?: string | null;
+  sonnetModel?: string | null;
+  opusModel?: string | null;
+  extraConfig?: string | null;
   tokenConfigured: boolean;
   customProviders: AgentCustomProviderSummary[];
 }
@@ -160,6 +175,9 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     label: "ZhiPu GLM",
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     model: "glm-5.1",
+    haikuModel: "glm-5.1",
+    sonnetModel: "glm-5.1",
+    opusModel: "glm-5.1",
     color: "#0F62FE",
     icon: <Zhipu size={14} />,
   },
@@ -168,6 +186,9 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     label: "MiniMax",
     baseUrl: "https://api.minimaxi.com/anthropic",
     model: "MiniMax-M2.7",
+    haikuModel: "MiniMax-M2.7",
+    sonnetModel: "MiniMax-M2.7",
+    opusModel: "MiniMax-M2.7",
     color: "#FF6B6B",
     icon: <Minimax size={14} />,
   },
@@ -176,6 +197,9 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     label: "Kimi",
     baseUrl: "https://api.moonshot.cn/anthropic",
     model: "kimi-k2.6",
+    haikuModel: "kimi-k2.6",
+    sonnetModel: "kimi-k2.6",
+    opusModel: "kimi-k2.6",
     color: "#6366F1",
     icon: <Kimi size={14} />,
   },
@@ -184,6 +208,9 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     label: "DeepSeek",
     baseUrl: "https://api.deepseek.com/anthropic",
     model: "deepseek-v4-pro",
+    haikuModel: "deepseek-v4-flash",
+    sonnetModel: "deepseek-v4-pro",
+    opusModel: "deepseek-v4-pro",
     color: "#1E88E5",
     icon: <DeepSeek size={14} />,
   },
@@ -192,6 +219,9 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     label: "XiaoMi Mimo",
     baseUrl: "https://api.xiaomimimo.com/anthropic",
     model: "mimo-v2.5-pro",
+    haikuModel: "mimo-v2.5-pro",
+    sonnetModel: "mimo-v2.5-pro",
+    opusModel: "mimo-v2.5-pro",
     color: "#FF6900",
     icon: <XiaomiMiMo size={14} />,
   },
@@ -334,6 +364,12 @@ function defaultCustomModel(tool: AgentTool) {
   return tool === "codex" ? "gpt-5-codex" : "";
 }
 
+function roleModelFallback(provider: AgentProviderOption, role: "haiku" | "sonnet" | "opus") {
+  if (role === "haiku") return provider.haikuModel ?? provider.model ?? "";
+  if (role === "sonnet") return provider.sonnetModel ?? provider.model ?? "";
+  return provider.opusModel ?? provider.model ?? "";
+}
+
 function findProvider(tool: AgentTool, providerId: string) {
   const options = providerOptionsFor(tool);
   if (isCustomProviderId(providerId)) {
@@ -350,6 +386,10 @@ function defaultAgentDraft(tool: AgentTool): AgentDraft {
     baseUrl: provider.baseUrl,
     apiKey: "",
     model: provider.model ?? "",
+    haikuModel: roleModelFallback(provider, "haiku"),
+    sonnetModel: roleModelFallback(provider, "sonnet"),
+    opusModel: roleModelFallback(provider, "opus"),
+    extraConfig: "",
   };
 }
 
@@ -378,6 +418,20 @@ function loadAgentDraft(tool: AgentTool): AgentDraft {
         typeof parsed.model === "string"
           ? parsed.model
           : (provider.model ?? ""),
+      haikuModel:
+        typeof parsed.haikuModel === "string"
+          ? parsed.haikuModel
+          : roleModelFallback(provider, "haiku"),
+      sonnetModel:
+        typeof parsed.sonnetModel === "string"
+          ? parsed.sonnetModel
+          : roleModelFallback(provider, "sonnet"),
+      opusModel:
+        typeof parsed.opusModel === "string"
+          ? parsed.opusModel
+          : roleModelFallback(provider, "opus"),
+      extraConfig:
+        typeof parsed.extraConfig === "string" ? parsed.extraConfig : "",
     };
   } catch {
     return fallback;
@@ -392,6 +446,10 @@ function persistAgentDraft(tool: AgentTool, draft: AgentDraft) {
       customName: draft.customName,
       baseUrl: draft.baseUrl,
       model: draft.model,
+      haikuModel: draft.haikuModel,
+      sonnetModel: draft.sonnetModel,
+      opusModel: draft.opusModel,
+      extraConfig: draft.extraConfig,
     }),
   );
 }
@@ -691,6 +749,25 @@ function AgentConfigSettings() {
           state.claude.model ??
           provider.model ??
           current.model,
+        haikuModel:
+          customProvider?.haikuModel ??
+          state.claude.haikuModel ??
+          roleModelFallback(provider, "haiku") ??
+          current.haikuModel,
+        sonnetModel:
+          customProvider?.sonnetModel ??
+          state.claude.sonnetModel ??
+          roleModelFallback(provider, "sonnet") ??
+          current.sonnetModel,
+        opusModel:
+          customProvider?.opusModel ??
+          state.claude.opusModel ??
+          roleModelFallback(provider, "opus") ??
+          current.opusModel,
+        extraConfig:
+          customProvider?.extraConfig ??
+          state.claude.extraConfig ??
+          current.extraConfig,
       };
     });
 
@@ -714,6 +791,13 @@ function AgentConfigSettings() {
           state.codex.model ??
           provider.model ??
           current.model,
+        haikuModel: current.haikuModel,
+        sonnetModel: current.sonnetModel,
+        opusModel: current.opusModel,
+        extraConfig:
+          customProvider?.extraConfig ??
+          state.codex.extraConfig ??
+          current.extraConfig,
       };
     });
   }, [state]);
@@ -769,6 +853,10 @@ function AgentConfigSettings() {
             baseUrl: draft.baseUrl,
             apiKey: draft.apiKey,
             model: draft.model,
+            haikuModel: draft.haikuModel,
+            sonnetModel: draft.sonnetModel,
+            opusModel: draft.opusModel,
+            extraConfig: draft.extraConfig,
           },
         },
       );
@@ -778,6 +866,10 @@ function AgentConfigSettings() {
         baseUrl: saved.baseUrl,
         apiKey: "",
         model: saved.model ?? defaultCustomModel(tool),
+        haikuModel: saved.haikuModel ?? "",
+        sonnetModel: saved.sonnetModel ?? "",
+        opusModel: saved.opusModel ?? "",
+        extraConfig: saved.extraConfig ?? "",
       });
       await loadState();
       if (!options.silent) {
@@ -845,6 +937,10 @@ function AgentConfigSettings() {
         baseUrl: saved.baseUrl,
         apiKey: "",
         model: saved.model ?? defaultCustomModel(tool),
+        haikuModel: saved.haikuModel ?? "",
+        sonnetModel: saved.sonnetModel ?? "",
+        opusModel: saved.opusModel ?? "",
+        extraConfig: saved.extraConfig ?? "",
       };
       provider = findProvider(tool, nextDraft.providerId);
     } else if (provider.id !== "official") {
@@ -870,6 +966,10 @@ function AgentConfigSettings() {
             baseUrl: nextDraft.baseUrl,
             apiKey: nextDraft.apiKey,
             model: nextDraft.model,
+            haikuModel: nextDraft.haikuModel,
+            sonnetModel: nextDraft.sonnetModel,
+            opusModel: nextDraft.opusModel,
+            extraConfig: nextDraft.extraConfig,
           },
         },
       );
@@ -1030,6 +1130,10 @@ function AgentConfigCard({
       baseUrl: provider.baseUrl,
       apiKey: "",
       model: provider.model ?? draft.model,
+      haikuModel: roleModelFallback(provider, "haiku"),
+      sonnetModel: roleModelFallback(provider, "sonnet"),
+      opusModel: roleModelFallback(provider, "opus"),
+      extraConfig: "",
     });
   };
 
@@ -1040,6 +1144,10 @@ function AgentConfigCard({
       baseUrl: "",
       apiKey: "",
       model: defaultCustomModel(tool),
+      haikuModel: "",
+      sonnetModel: "",
+      opusModel: "",
+      extraConfig: "",
     });
   };
 
@@ -1050,6 +1158,10 @@ function AgentConfigCard({
       baseUrl: provider.baseUrl,
       apiKey: "",
       model: provider.model ?? defaultCustomModel(tool),
+      haikuModel: provider.haikuModel ?? "",
+      sonnetModel: provider.sonnetModel ?? "",
+      opusModel: provider.opusModel ?? "",
+      extraConfig: provider.extraConfig ?? "",
     });
   };
 
@@ -1208,12 +1320,68 @@ function AgentConfigCard({
           />
         </label>
 
-        <label className="xy-field">
-          <span>模型</span>
-          <input
-            value={draft.model}
-            placeholder={tool === "claude" ? "可选" : "gpt-5-codex"}
-            onChange={(e) => updateDraft({ model: e.target.value })}
+        {tool === "claude" ? (
+          <div className="xy-agent-role-models xy-field--wide">
+            <span className="xy-agent-role-title">Claude 模型角色</span>
+            <div className="xy-agent-role-grid">
+              <label className="xy-field">
+                <span>Sonnet</span>
+                <input
+                  value={draft.sonnetModel}
+                  placeholder="claude-sonnet / deepseek-v4-pro"
+                  onChange={(e) =>
+                    updateDraft({ sonnetModel: e.target.value })
+                  }
+                />
+              </label>
+              <label className="xy-field">
+                <span>Opus</span>
+                <input
+                  value={draft.opusModel}
+                  placeholder="claude-opus / deepseek-v4-pro"
+                  onChange={(e) => updateDraft({ opusModel: e.target.value })}
+                />
+              </label>
+              <label className="xy-field">
+                <span>Haiku</span>
+                <input
+                  value={draft.haikuModel}
+                  placeholder="claude-haiku / deepseek-v4-flash"
+                  onChange={(e) => updateDraft({ haikuModel: e.target.value })}
+                />
+              </label>
+            </div>
+            <label className="xy-field">
+              <span>兜底模型</span>
+              <input
+                value={draft.model}
+                placeholder="可选"
+                onChange={(e) => updateDraft({ model: e.target.value })}
+              />
+            </label>
+          </div>
+        ) : (
+          <label className="xy-field">
+            <span>模型</span>
+            <input
+              value={draft.model}
+              placeholder="gpt-5-codex"
+              onChange={(e) => updateDraft({ model: e.target.value })}
+            />
+          </label>
+        )}
+
+        <label className="xy-field xy-field--wide">
+          <span>自定义参数</span>
+          <textarea
+            value={draft.extraConfig}
+            spellCheck={false}
+            placeholder={
+              tool === "claude"
+                ? '{\n  "env": {\n    "API_TIMEOUT_MS": "600000"\n  }\n}'
+                : 'approval_policy = "never"\nsandbox_mode = "danger-full-access"'
+            }
+            onChange={(e) => updateDraft({ extraConfig: e.target.value })}
           />
         </label>
       </div>

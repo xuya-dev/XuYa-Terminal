@@ -16,6 +16,8 @@ use xuya_pty::PtySession;
 
 const XUYA_CODEX_PROVIDER_ID: &str = "xuya_custom";
 const CUSTOM_PROVIDER_SELECTOR_PREFIX: &str = "custom:";
+const XUYA_CODEX_EXTRA_BEGIN: &str = "# XuYa custom config begin";
+const XUYA_CODEX_EXTRA_END: &str = "# XuYa custom config end";
 
 const CLAUDE_MANAGED_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
@@ -57,6 +59,10 @@ pub struct AgentProviderConfigRequest {
     base_url: Option<String>,
     api_key: Option<String>,
     model: Option<String>,
+    haiku_model: Option<String>,
+    sonnet_model: Option<String>,
+    opus_model: Option<String>,
+    extra_config: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +74,10 @@ pub struct AgentCustomProviderSaveRequest {
     base_url: String,
     api_key: Option<String>,
     model: Option<String>,
+    haiku_model: Option<String>,
+    sonnet_model: Option<String>,
+    opus_model: Option<String>,
+    extra_config: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,7 +87,16 @@ struct AgentCustomProvider {
     name: String,
     base_url: String,
     api_key: String,
+    #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    haiku_model: Option<String>,
+    #[serde(default)]
+    sonnet_model: Option<String>,
+    #[serde(default)]
+    opus_model: Option<String>,
+    #[serde(default)]
+    extra_config: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -95,6 +114,10 @@ pub struct AgentCustomProviderSummary {
     base_url: String,
     endpoint: String,
     model: Option<String>,
+    haiku_model: Option<String>,
+    sonnet_model: Option<String>,
+    opus_model: Option<String>,
+    extra_config: Option<String>,
     token_configured: bool,
 }
 
@@ -107,6 +130,10 @@ pub struct AgentToolConfigState {
     base_url: Option<String>,
     endpoint: Option<String>,
     model: Option<String>,
+    haiku_model: Option<String>,
+    sonnet_model: Option<String>,
+    opus_model: Option<String>,
+    extra_config: Option<String>,
     token_configured: bool,
     custom_providers: Vec<AgentCustomProviderSummary>,
 }
@@ -284,10 +311,7 @@ pub async fn save_agent_custom_provider(
 }
 
 #[tauri::command]
-pub async fn delete_agent_custom_provider(
-    tool: String,
-    provider_id: String,
-) -> Result<(), String> {
+pub async fn delete_agent_custom_provider(tool: String, provider_id: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || delete_agent_custom_provider_inner(&tool, &provider_id))
         .await
         .map_err(|e| format!("Custom provider delete failed: {e}"))?
@@ -332,15 +356,22 @@ fn save_agent_custom_provider_inner(
         .as_deref()
         .and_then(custom_provider_id_from_selector)
         .or_else(|| clean_optional_text(request.provider_id.as_deref()));
-    let existing_index = requested_id
-        .as_deref()
-        .and_then(|id| store.providers.iter().position(|provider| provider.id == id));
+    let existing_index = requested_id.as_deref().and_then(|id| {
+        store
+            .providers
+            .iter()
+            .position(|provider| provider.id == id)
+    });
     let existing_api_key = existing_index
         .and_then(|index| clean_optional_text(Some(store.providers[index].api_key.as_str())));
     let api_key = clean_optional_text(request.api_key.as_deref())
         .or(existing_api_key)
         .ok_or_else(|| "API Key is required for custom providers".to_string())?;
     let model = normalize_agent_model(tool, request.model.as_deref());
+    let haiku_model = normalize_claude_role_model(tool, request.haiku_model.as_deref());
+    let sonnet_model = normalize_claude_role_model(tool, request.sonnet_model.as_deref());
+    let opus_model = normalize_claude_role_model(tool, request.opus_model.as_deref());
+    let extra_config = normalize_extra_config(tool, request.extra_config.as_deref())?;
     let id = requested_id.unwrap_or_else(|| unique_custom_provider_id(&store.providers, &name));
 
     let provider = AgentCustomProvider {
@@ -349,6 +380,10 @@ fn save_agent_custom_provider_inner(
         base_url,
         api_key,
         model,
+        haiku_model,
+        sonnet_model,
+        opus_model,
+        extra_config,
     };
 
     if let Some(index) = store
@@ -374,9 +409,7 @@ fn delete_agent_custom_provider_inner(tool: &str, provider_id: &str) -> Result<(
         .or_else(|| clean_optional_text(Some(provider_id)))
         .ok_or_else(|| "Custom provider id is required".to_string())?;
 
-    store
-        .providers
-        .retain(|provider| provider.id != target_id);
+    store.providers.retain(|provider| provider.id != target_id);
     write_custom_provider_store(&path, &store)
 }
 
@@ -399,76 +432,124 @@ fn apply_claude_provider_config(
         .as_deref()
         .map(|id| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}"))
         .unwrap_or_else(|| provider_id.clone());
+    let extra_config =
+        normalize_extra_config("claude", request.extra_config.as_deref())?.or_else(|| {
+            stored_custom
+                .as_ref()
+                .and_then(|provider| provider.extra_config.clone())
+        });
 
     let mut settings = read_json_or_empty_object(&path)?;
-    let root = ensure_json_object(&mut settings);
-    let env_value = root
-        .entry("env".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !env_value.is_object() {
-        *env_value = Value::Object(Map::new());
-    }
-    let env = env_value
-        .as_object_mut()
-        .ok_or_else(|| "Failed to access Claude env settings".to_string())?;
-    let existing_api_key = env
-        .get("ANTHROPIC_AUTH_TOKEN")
-        .or_else(|| env.get("ANTHROPIC_API_KEY"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
+    let (base_url, endpoint) = {
+        let root = ensure_json_object(&mut settings);
+        let env_value = root
+            .entry("env".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !env_value.is_object() {
+            *env_value = Value::Object(Map::new());
+        }
+        let env = env_value
+            .as_object_mut()
+            .ok_or_else(|| "Failed to access Claude env settings".to_string())?;
+        let existing_api_key = env
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .or_else(|| env.get("ANTHROPIC_API_KEY"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
 
-    for key in CLAUDE_MANAGED_ENV_KEYS {
-        env.remove(*key);
-    }
+        for key in CLAUDE_MANAGED_ENV_KEYS {
+            env.remove(*key);
+        }
 
-    let (base_url, endpoint) = if provider_id == "official" {
-        (None, None)
-    } else {
-        let raw_base_url = clean_optional_text(request.base_url.as_deref())
-            .or_else(|| stored_custom.as_ref().map(|provider| provider.base_url.clone()))
-            .or_else(|| claude_known_provider_base_url(&provider_id).map(str::to_string))
-            .ok_or_else(|| "Claude base URL is required".to_string())?;
-        let base_url = normalize_claude_base_url(&raw_base_url)?;
-        let api_key = clean_optional_text(request.api_key.as_deref())
-            .or_else(|| {
-                stored_custom
-                    .as_ref()
-                    .and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
-            })
-            .or(existing_api_key)
-            .ok_or_else(|| "Claude API Key is required".to_string())?;
-        env.insert(
-            "ANTHROPIC_BASE_URL".to_string(),
-            Value::String(base_url.clone()),
-        );
-        env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), Value::String(api_key));
+        let (base_url, endpoint) = if provider_id == "official" {
+            (None, None)
+        } else {
+            let raw_base_url = clean_optional_text(request.base_url.as_deref())
+                .or_else(|| {
+                    stored_custom
+                        .as_ref()
+                        .map(|provider| provider.base_url.clone())
+                })
+                .or_else(|| claude_known_provider_base_url(&provider_id).map(str::to_string))
+                .ok_or_else(|| "Claude base URL is required".to_string())?;
+            let base_url = normalize_claude_base_url(&raw_base_url)?;
+            let api_key = clean_optional_text(request.api_key.as_deref())
+                .or_else(|| {
+                    stored_custom
+                        .as_ref()
+                        .and_then(|provider| clean_optional_text(Some(provider.api_key.as_str())))
+                })
+                .or(existing_api_key)
+                .ok_or_else(|| "Claude API Key is required".to_string())?;
+            env.insert(
+                "ANTHROPIC_BASE_URL".to_string(),
+                Value::String(base_url.clone()),
+            );
+            env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), Value::String(api_key));
+
+            let endpoint = claude_messages_endpoint(&base_url);
+            (Some(base_url), Some(endpoint))
+        };
 
         let model = clean_optional_text(request.model.as_deref()).or_else(|| {
             stored_custom
                 .as_ref()
                 .and_then(|provider| provider.model.clone())
         });
+        let haiku_model = clean_optional_text(request.haiku_model.as_deref())
+            .or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.haiku_model.clone())
+            })
+            .or_else(|| model.clone());
+        let sonnet_model = clean_optional_text(request.sonnet_model.as_deref())
+            .or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.sonnet_model.clone())
+            })
+            .or_else(|| model.clone());
+        let opus_model = clean_optional_text(request.opus_model.as_deref())
+            .or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .and_then(|provider| provider.opus_model.clone())
+            })
+            .or_else(|| model.clone());
+
         if let Some(model) = model {
-            env.insert("ANTHROPIC_MODEL".to_string(), Value::String(model.clone()));
+            env.insert("ANTHROPIC_MODEL".to_string(), Value::String(model));
+        }
+        if let Some(model) = haiku_model {
             env.insert(
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
-                Value::String(model.clone()),
+                Value::String(model),
             );
+        }
+        if let Some(model) = sonnet_model {
             env.insert(
                 "ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(),
-                Value::String(model.clone()),
+                Value::String(model),
             );
+        }
+        if let Some(model) = opus_model {
             env.insert(
                 "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
                 Value::String(model),
             );
         }
 
-        let endpoint = claude_messages_endpoint(&base_url);
-        (Some(base_url), Some(endpoint))
+        (base_url, endpoint)
     };
+
+    if let Some(extra_config) = extra_config {
+        let mut extra = parse_claude_extra_config(&extra_config)?;
+        remove_claude_protected_env_keys(&mut extra);
+        merge_json_value(&mut settings, extra);
+    }
 
     write_json_pretty_atomic(&path, &settings)?;
 
@@ -501,6 +582,12 @@ fn apply_codex_provider_config(
         .as_deref()
         .map(|id| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}"))
         .unwrap_or_else(|| provider_id.clone());
+    let extra_config =
+        normalize_extra_config("codex", request.extra_config.as_deref())?.or_else(|| {
+            stored_custom
+                .as_ref()
+                .and_then(|provider| provider.extra_config.clone())
+        });
     let current = fs::read_to_string(&path).unwrap_or_default();
     let current_provider = extract_top_level_toml_string(&current, "model_provider");
     let existing_api_key = current_provider
@@ -536,7 +623,11 @@ fn apply_codex_provider_config(
         )
     } else {
         let raw_base_url = clean_optional_text(request.base_url.as_deref())
-            .or_else(|| stored_custom.as_ref().map(|provider| provider.base_url.clone()))
+            .or_else(|| {
+                stored_custom
+                    .as_ref()
+                    .map(|provider| provider.base_url.clone())
+            })
             .ok_or_else(|| "Codex base URL is required".to_string())?;
         let base_url = normalize_codex_base_url(&raw_base_url)?;
         let api_key = clean_optional_text(request.api_key.as_deref())
@@ -567,7 +658,11 @@ fn apply_codex_provider_config(
         (prefix, Some(base_url), Some(endpoint))
     };
 
-    let next = merge_codex_config(prefix, preserved);
+    let next = merge_codex_config(
+        prefix,
+        wrap_codex_extra_config(extra_config.as_deref()),
+        preserved,
+    );
     write_text_atomic(&path, &next)?;
 
     Ok(AgentConfigApplyResult {
@@ -837,6 +932,10 @@ fn summarize_custom_provider(
         base_url,
         endpoint,
         model: provider.model.clone(),
+        haiku_model: provider.haiku_model.clone(),
+        sonnet_model: provider.sonnet_model.clone(),
+        opus_model: provider.opus_model.clone(),
+        extra_config: provider.extra_config.clone(),
         token_configured: !provider.api_key.trim().is_empty(),
     })
 }
@@ -897,6 +996,107 @@ fn normalize_agent_model(tool: &str, model: Option<&str>) -> Option<String> {
             None
         }
     })
+}
+
+fn normalize_claude_role_model(tool: &str, model: Option<&str>) -> Option<String> {
+    if tool == "claude" {
+        clean_optional_text(model)
+    } else {
+        None
+    }
+}
+
+fn normalize_extra_config(
+    tool: &str,
+    extra_config: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(extra_config) = clean_optional_text(extra_config) else {
+        return Ok(None);
+    };
+    match tool {
+        "claude" => {
+            parse_claude_extra_config(&extra_config)?;
+            Ok(Some(extra_config))
+        }
+        "codex" => {
+            validate_codex_extra_config(&extra_config)?;
+            Ok(Some(extra_config))
+        }
+        other => Err(format!("Unsupported agent config target: {other}")),
+    }
+}
+
+fn parse_claude_extra_config(extra_config: &str) -> Result<Value, String> {
+    let value = serde_json::from_str::<Value>(extra_config)
+        .map_err(|e| format!("Claude custom config must be a JSON object: {e}"))?;
+    if !value.is_object() {
+        return Err("Claude custom config must be a JSON object".to_string());
+    }
+    if value.get("env").is_some_and(|env| !env.is_object()) {
+        return Err("Claude custom config env must be a JSON object".to_string());
+    }
+    Ok(value)
+}
+
+fn remove_claude_protected_env_keys(extra: &mut Value) {
+    let Some(env) = extra.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for key in [
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    ] {
+        env.remove(key);
+    }
+}
+
+fn merge_json_value(target: &mut Value, source: Value) {
+    match (target, source) {
+        (Value::Object(target), Value::Object(source)) => {
+            for (key, value) in source {
+                match target.get_mut(&key) {
+                    Some(existing) => merge_json_value(existing, value),
+                    None => {
+                        target.insert(key, value);
+                    }
+                }
+            }
+        }
+        (target, source) => {
+            *target = source;
+        }
+    }
+}
+
+fn validate_codex_extra_config(extra_config: &str) -> Result<(), String> {
+    let mut section: Option<String> = None;
+    for line in extra_config.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(header) = parse_toml_section_header(trimmed) {
+            if is_xuya_codex_provider_section(&header) {
+                return Err(
+                    "Codex custom config cannot edit XuYa-managed provider sections".to_string(),
+                );
+            }
+            section = Some(header);
+            continue;
+        }
+        if section.is_none() && toml_line_key(trimmed).is_some_and(is_codex_managed_top_level_key) {
+            return Err(
+                "Codex custom config cannot override model/provider fields managed by XuYa"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn claude_known_provider_base_url(provider_id: &str) -> Option<&'static str> {
@@ -999,6 +1199,24 @@ fn read_claude_config_state(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let haiku_model = env
+        .and_then(|env| env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let sonnet_model = env
+        .and_then(|env| env.get("ANTHROPIC_DEFAULT_SONNET_MODEL"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let opus_model = env
+        .and_then(|env| env.get("ANTHROPIC_DEFAULT_OPUS_MODEL"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let token_configured = env.is_some_and(|env| {
         env.get("ANTHROPIC_AUTH_TOKEN")
             .or_else(|| env.get("ANTHROPIC_API_KEY"))
@@ -1010,7 +1228,9 @@ fn read_claude_config_state(
         Some(
             known_claude_provider_id(base_url)
                 .map(str::to_string)
-                .or_else(|| custom_provider_selector_by_base_url("claude", base_url, custom_providers))
+                .or_else(|| {
+                    custom_provider_selector_by_base_url("claude", base_url, custom_providers)
+                })
                 .unwrap_or_else(|| "custom".to_string()),
         )
     } else if token_configured {
@@ -1021,6 +1241,11 @@ fn read_claude_config_state(
         None
     };
     let endpoint = base_url.as_deref().map(claude_messages_endpoint);
+    let extra_config = active_provider
+        .as_deref()
+        .and_then(custom_provider_id_from_selector)
+        .and_then(|id| find_custom_provider(custom_providers, &id))
+        .and_then(|provider| provider.extra_config.clone());
 
     AgentToolConfigState {
         path: path_to_string(path),
@@ -1029,6 +1254,10 @@ fn read_claude_config_state(
         base_url,
         endpoint,
         model,
+        haiku_model,
+        sonnet_model,
+        opus_model,
+        extra_config,
         token_configured,
         custom_providers: custom_provider_summaries("claude", custom_providers),
     }
@@ -1054,20 +1283,25 @@ fn read_codex_config_state(
         .as_deref()
         .is_some_and(|value| !value.trim().is_empty());
     let endpoint = base_url.as_deref().map(codex_responses_endpoint);
-    let active_provider = active_config_provider
+    let active_provider = active_config_provider.as_deref().map(|provider| {
+        if provider == "openai" {
+            "official".to_string()
+        } else if let Some(id) = custom_provider_id_from_codex_provider_id(provider) {
+            format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}")
+        } else {
+            base_url
+                .as_deref()
+                .and_then(|url| {
+                    custom_provider_selector_by_base_url("codex", url, custom_providers)
+                })
+                .unwrap_or_else(|| "custom".to_string())
+        }
+    });
+    let extra_config = active_provider
         .as_deref()
-        .map(|provider| {
-            if provider == "openai" {
-                "official".to_string()
-            } else if let Some(id) = custom_provider_id_from_codex_provider_id(provider) {
-                format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}")
-            } else {
-                base_url
-                    .as_deref()
-                    .and_then(|url| custom_provider_selector_by_base_url("codex", url, custom_providers))
-                    .unwrap_or_else(|| "custom".to_string())
-            }
-        });
+        .and_then(custom_provider_id_from_selector)
+        .and_then(|id| find_custom_provider(custom_providers, &id))
+        .and_then(|provider| provider.extra_config.clone());
 
     AgentToolConfigState {
         path: path_to_string(path),
@@ -1076,6 +1310,10 @@ fn read_codex_config_state(
         base_url,
         endpoint,
         model,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        extra_config,
         token_configured,
         custom_providers: custom_provider_summaries("codex", custom_providers),
     }
@@ -1169,9 +1407,21 @@ fn strip_codex_managed_config(text: &str) -> String {
     let mut output = Vec::new();
     let mut section: Option<String> = None;
     let mut skipping_managed_section = false;
+    let mut skipping_extra_config = false;
 
     for line in text.lines() {
         let trimmed = line.trim();
+        if trimmed == XUYA_CODEX_EXTRA_BEGIN {
+            skipping_extra_config = true;
+            continue;
+        }
+        if trimmed == XUYA_CODEX_EXTRA_END {
+            skipping_extra_config = false;
+            continue;
+        }
+        if skipping_extra_config {
+            continue;
+        }
         if trimmed == "# Managed by XuYa Terminal." {
             continue;
         }
@@ -1195,14 +1445,25 @@ fn strip_codex_managed_config(text: &str) -> String {
     output.join("\n").trim().to_string()
 }
 
-fn merge_codex_config(prefix: String, preserved: String) -> String {
+fn wrap_codex_extra_config(extra_config: Option<&str>) -> String {
+    let Some(extra_config) = clean_optional_text(extra_config) else {
+        return String::new();
+    };
+    format!("{XUYA_CODEX_EXTRA_BEGIN}\n{extra_config}\n{XUYA_CODEX_EXTRA_END}")
+}
+
+fn merge_codex_config(prefix: String, extra_config: String, preserved: String) -> String {
     let prefix = prefix.trim();
+    let extra_config = extra_config.trim();
     let preserved = preserved.trim();
-    if preserved.is_empty() {
-        format!("{prefix}\n")
-    } else {
-        format!("{prefix}\n\n{preserved}\n")
+    let mut blocks = vec![prefix.to_string()];
+    if !extra_config.is_empty() {
+        blocks.push(extra_config.to_string());
     }
+    if !preserved.is_empty() {
+        blocks.push(preserved.to_string());
+    }
+    format!("{}\n", blocks.join("\n\n"))
 }
 
 fn is_xuya_codex_provider_section(section: &str) -> bool {
