@@ -2,6 +2,15 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [0.1.1] - 2026-06-04
+
+### ✨ 自动更新 (Auto Update)
+- 接入 Tauri v2 updater 插件，支持从 GitHub Releases 检查、下载并安装更新。
+- 在设置弹窗新增自动更新区域，提供检查更新、查看版本说明、下载安装进度和安装后重启能力。
+- 配置 GitHub Releases 静态更新源 `latest.json`，Windows 安装模式使用被动安装。
+- 新增 GitHub Actions 发布工作流，推送 `v*` tag 后自动构建 Windows 安装包、生成 updater 签名并上传 Release 资源。
+- 新增 [docs/auto-update.md](docs/auto-update.md)，记录 updater 签名密钥、GitHub Secrets 和版本发布流程。
+
 ## [0.1.0] - 2026-06-02
 
 这是 **XuYa Terminal** 的第一个重构开源准备版本，包含全局界面美学重塑、主题汉化与中文化特色重置，以及面向 AI 编程的功能性优化。

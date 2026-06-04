@@ -1,5 +1,19 @@
-import { useEffect, useCallback, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { useEffect, useCallback, useState, type ReactNode } from "react";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  CheckCircle2,
+  Download,
+  Loader2,
+  Plus,
+  RotateCcw,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useModalStore } from "../stores/modalStore";
 import { useSettingsStore, type CursorStyle } from "../stores/settingsStore";
 import {
@@ -24,6 +38,21 @@ const CURSOR_OPTIONS: { value: CursorStyle; label: string }[] = [
   { value: "block", label: "方块" },
   { value: "underline", label: "下划线" },
 ];
+
+type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "none"
+  | "error";
+
+interface UpdateInfo {
+  version: string;
+  date?: string;
+  body?: string;
+}
 
 /** Shared centered-modal shell with overlay + Esc-to-close. */
 function ModalShell({
@@ -206,6 +235,8 @@ function SettingsModal() {
 
   return (
     <ModalShell title="设置" onClose={closeModal}>
+      <ApplicationSettings />
+
       <section className="xy-set-section">
         <h3 className="xy-set-section-title">外观</h3>
 
@@ -272,6 +303,154 @@ function SettingsModal() {
 
       <SessionMenuSettings />
     </ModalShell>
+  );
+}
+
+function ApplicationSettings() {
+  const [status, setStatus] = useState<UpdateStatus>("idle");
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [message, setMessage] = useState("从 GitHub Releases 获取最新版本");
+  const [progress, setProgress] = useState<number | null>(null);
+
+  const busy = status === "checking" || status === "downloading";
+
+  const statusIcon =
+    status === "error" ? (
+      <AlertCircle size={15} strokeWidth={1.8} />
+    ) : status === "ready" || status === "none" ? (
+      <CheckCircle2 size={15} strokeWidth={1.8} />
+    ) : busy ? (
+      <Loader2 className="xy-spin" size={15} strokeWidth={1.8} />
+    ) : (
+      <RefreshCw size={15} strokeWidth={1.8} />
+    );
+
+  const handleCheck = async () => {
+    setStatus("checking");
+    setUpdateInfo(null);
+    setProgress(null);
+    setMessage("正在检查 GitHub Releases...");
+
+    try {
+      const update = await check();
+
+      if (!update) {
+        setStatus("none");
+        setMessage("当前已是最新版本");
+        return;
+      }
+
+      setStatus("available");
+      setUpdateInfo({
+        version: update.version,
+        date: update.date,
+        body: update.body,
+      });
+      setMessage(`发现新版本 ${update.version}`);
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "检查更新失败");
+    }
+  };
+
+  const handleInstall = async () => {
+    setStatus("downloading");
+    setProgress(0);
+    setMessage("正在下载安装包...");
+
+    try {
+      const update = await check();
+
+      if (!update) {
+        setStatus("none");
+        setProgress(null);
+        setMessage("当前已是最新版本");
+        return;
+      }
+
+      let downloaded = 0;
+      let contentLength = 0;
+
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          contentLength = event.data.contentLength ?? 0;
+          downloaded = 0;
+          setProgress(0);
+        }
+
+        if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          if (contentLength > 0) {
+            setProgress(Math.round((downloaded / contentLength) * 100));
+          }
+        }
+
+        if (event.event === "Finished") {
+          setProgress(100);
+        }
+      });
+
+      setStatus("ready");
+      setMessage("更新已安装，正在重启应用...");
+      await relaunch();
+    } catch (error) {
+      setStatus("error");
+      setProgress(null);
+      setMessage(error instanceof Error ? error.message : "安装更新失败");
+    }
+  };
+
+  return (
+    <section className="xy-set-section">
+      <h3 className="xy-set-section-title">应用</h3>
+
+      <div className="xy-update-card" data-status={status}>
+        <div className="xy-update-status">
+          <span className="xy-update-status-icon">{statusIcon}</span>
+          <div className="xy-update-copy">
+            <span className="xy-update-title">自动更新</span>
+            <span className="xy-update-message">{message}</span>
+            {updateInfo && (
+              <span className="xy-update-meta">
+                {updateInfo.date ? `${updateInfo.date} · ` : ""}
+                版本 {updateInfo.version}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {typeof progress === "number" && (
+          <div className="xy-update-progress" aria-label={`下载进度 ${progress}%`}>
+            <span style={{ width: `${progress}%` }} />
+          </div>
+        )}
+
+        {updateInfo?.body && (
+          <div className="xy-update-notes">{updateInfo.body}</div>
+        )}
+
+        <div className="xy-update-actions">
+          <button
+            className="xy-mini-btn"
+            type="button"
+            disabled={busy}
+            onClick={handleCheck}
+          >
+            <RefreshCw size={13} strokeWidth={1.8} />
+            检查更新
+          </button>
+          <button
+            className="xy-mini-btn xy-mini-btn--accent"
+            type="button"
+            disabled={status !== "available"}
+            onClick={handleInstall}
+          >
+            <Download size={13} strokeWidth={1.8} />
+            安装并重启
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -512,7 +691,7 @@ function AboutModal() {
         </div>
         <div className="xy-about-name">XuYa Terminal</div>
         <div className="xy-about-tag">面向 AI Agent 工程师的终端管理器</div>
-        <div className="xy-about-version">版本 0.1.0 · Tauri v2 · React 19</div>
+        <div className="xy-about-version">版本 0.1.1 · Tauri v2 · React 19</div>
         <div className="xy-about-hint">按 Ctrl+Shift+P 打开命令面板</div>
       </div>
     </ModalShell>

@@ -17,6 +17,8 @@ dashmap = "6"
 log = "0.4"
 tauri-plugin-dialog = "2"
 windows-sys = { version = "0.61", features = ["Win32_System_DataExchange", "Win32_System_Ole"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
