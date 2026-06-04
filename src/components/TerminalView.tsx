@@ -48,6 +48,8 @@ const REGISTRY = new Map<string, Terminal>();
 const ALT_V = [27, 118];
 const CTRL_V = [22];
 const LAYOUT_KEY = "xuya-layout";
+const TERMINAL_INITIAL_FIT_FRAMES = 2;
+const TERMINAL_RESIZE_SETTLE_MS = 80;
 let agentSessionLookupQueue: Promise<void> = Promise.resolve();
 
 export function clearTerminal(panelId: string): void {
@@ -293,9 +295,15 @@ export default function TerminalView(
       }
     };
 
-    const waitForTerminalOpen = (): Promise<void> => {
-      if (isOpen) return Promise.resolve();
-      return new Promise((resolve) => openWaiters.push(resolve));
+    const waitForTerminalOpen = async (): Promise<void> => {
+      if (!isOpen) {
+        await new Promise<void>((resolve) => openWaiters.push(resolve));
+      }
+
+      for (let i = 0; i < TERMINAL_INITIAL_FIT_FRAMES && !disposed; i += 1) {
+        await nextAnimationFrame();
+        safeFit(false);
+      }
     };
 
     const safeFit = (resizePty = false): boolean => {
@@ -710,9 +718,27 @@ export default function TerminalView(
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const observer = new ResizeObserver(() => handleResize());
+    let resizeFrame: number | null = null;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleResize = () => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      if (resizeTimer) clearTimeout(resizeTimer);
+
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        resizeTimer = setTimeout(() => {
+          resizeTimer = null;
+          handleResize();
+        }, TERMINAL_RESIZE_SETTLE_MS);
+      });
+    };
+    const observer = new ResizeObserver(scheduleResize);
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      if (resizeTimer) clearTimeout(resizeTimer);
+    };
   }, [handleResize]);
 
   // Intercept paste events to handle clipboard images and files.
@@ -977,6 +1003,10 @@ function hasRenderableSize(el: HTMLElement | null): el is HTMLElement {
   if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return false;
   const rect = el.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function fitTerminal(
