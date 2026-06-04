@@ -9,10 +9,12 @@
 - Claude Code 支持官方、ZhiPu GLM、MiniMax、Kimi、DeepSeek、XiaoMi Mimo 与自定义端点。
 - Codex 支持官方与自定义端点，并固定使用 Responses API 配置。
 - Claude Code 与 Codex 的自定义厂商支持保存多个条目，可在设置页快速切换、更新或删除。
+- 自定义厂商配置改为写入 `~/.xuya/agent-providers.sqlite`，再次选中已保存厂商时会回显完整配置。
 - Claude Code 配置支持分别设置 Sonnet、Opus、Haiku 三个角色模型，并可直接查看和编辑完整 `settings.json`。
 - Codex 配置可直接查看和编辑完整 `config.toml`，界面展示时使用占位符隐藏 API Key。
 - Claude Code 与 Codex 配置页支持从当前厂商拉取 OpenAI 兼容模型列表，并可快速填入模型字段。
 - AI 配置页改为 Claude Code / Codex 单卡切换布局，避免双列展示造成配置区域拥挤。
+- AI 配置页将自定义厂商合并到内置厂商网格，并把模型列表、完整配置编辑器改为按需展开。
 - 写入范围保持轻量：Claude Code 写入 `~/.claude/settings.json`，Codex 写入 `~/.codex/config.toml`。
 - 端点能力保持约束：Claude Code 仅展示 `/v1/messages`，Codex 仅展示 `/v1/responses`，不提供反代协议转换。
 

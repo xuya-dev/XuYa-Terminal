@@ -16,6 +16,7 @@ uuid = { workspace = true }
 dashmap = "6"
 log = "0.4"
 reqwest = { version = "0.13", features = ["json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 tauri-plugin-dialog = "2"
 windows-sys = { version = "0.61", features = ["Win32_System_DataExchange", "Win32_System_Ole"] }
 tauri-plugin-updater = "2"

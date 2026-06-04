@@ -1426,6 +1426,9 @@ function AgentConfigCard({
   const [fetchedModels, setFetchedModels] = useState<AgentFetchedModel[]>([]);
   const [modelFetchMessage, setModelFetchMessage] =
     useState<AgentConfigMessage | null>(null);
+  const [activeDetail, setActiveDetail] = useState<"models" | "config" | null>(
+    null,
+  );
 
   const updateDraft = (
     patch: Partial<AgentDraft>,
@@ -1444,6 +1447,8 @@ function AgentConfigCard({
 
   const handleProviderChange = (providerId: string) => {
     const provider = findProvider(tool, providerId);
+    setFetchedModels([]);
+    setModelFetchMessage(null);
     updateDraft({
       providerId: provider.id,
       customName: "",
@@ -1457,6 +1462,8 @@ function AgentConfigCard({
   };
 
   const handleNewCustom = () => {
+    setFetchedModels([]);
+    setModelFetchMessage(null);
     updateDraft({
       providerId: "custom",
       customName: "",
@@ -1470,6 +1477,8 @@ function AgentConfigCard({
   };
 
   const handleCustomSelect = (provider: AgentCustomProviderSummary) => {
+    setFetchedModels([]);
+    setModelFetchMessage(null);
     onDraftChange({
       ...draft,
       providerId: customProviderSelector(provider.id),
@@ -1587,74 +1596,70 @@ function AgentConfigCard({
             </button>
           );
         })}
-      </div>
-
-      <div className="xy-agent-custom-panel">
-        <div className="xy-agent-custom-head">
-          <span>自定义厂商</span>
-          <button
-            className={`xy-mini-btn xy-mini-btn--compact ${
-              draft.providerId === "custom" ? "is-active" : ""
-            }`}
-            type="button"
-            onClick={handleNewCustom}
-          >
-            <Plus size={12} strokeWidth={1.8} />
-            新增
-          </button>
-        </div>
-        <div className="xy-agent-custom-list">
-          {customProviders.length === 0 && (
-            <span className="xy-agent-custom-empty">暂无保存的自定义厂商</span>
-          )}
-          {customProviders.map((provider) => {
-            const providerId = customProviderSelector(provider.id);
-            const isActive = providerId === draft.providerId;
-            return (
-              <div
-                key={provider.id}
-                className={`xy-agent-custom-item ${
-                  isActive ? "is-active" : ""
-                }`}
-                style={
-                  {
-                    "--xy-provider-color": "#64748B",
-                  } as CSSProperties
-                }
+        {customProviders.map((provider) => {
+          const providerId = customProviderSelector(provider.id);
+          const isActive = providerId === draft.providerId;
+          return (
+            <div
+              key={provider.id}
+              className={`xy-agent-provider xy-agent-provider--saved ${
+                isActive ? "is-active" : ""
+              }`}
+              style={
+                {
+                  "--xy-provider-color": "#64748B",
+                } as CSSProperties
+              }
+            >
+              <button
+                className="xy-agent-provider-main"
+                type="button"
+                onClick={() => handleCustomSelect(provider)}
+                title={provider.endpoint}
               >
-                <button
-                  className="xy-agent-custom-main"
-                  type="button"
-                  onClick={() => handleCustomSelect(provider)}
-                  title={provider.endpoint}
+                <span className="xy-provider-icon">
+                  <NewAPI size={14} />
+                </span>
+                <span className="xy-agent-provider-text">
+                  <strong>{provider.name}</strong>
+                  <small>{provider.model || provider.endpoint}</small>
+                </span>
+                <span
+                  className={`xy-agent-provider-token ${
+                    provider.tokenConfigured ? "is-ready" : ""
+                  }`}
                 >
-                  <span className="xy-provider-icon">
-                    <NewAPI size={14} />
-                  </span>
-                  <span className="xy-agent-custom-text">
-                    <strong>{provider.name}</strong>
-                    <small>{provider.model || provider.endpoint}</small>
-                  </span>
-                  <span
-                    className={`xy-agent-custom-token ${
-                      provider.tokenConfigured ? "is-ready" : ""
-                    }`}
-                  >
-                    {provider.tokenConfigured ? "Key" : "缺 Key"}
-                  </span>
-                </button>
-                <button
-                  className="xy-agent-custom-delete"
-                  type="button"
-                  title="删除自定义厂商"
-                  onClick={() => onDeleteCustom(providerId)}
-                >
-                  <Trash2 size={12} strokeWidth={1.8} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                  {provider.tokenConfigured ? "Key" : "缺 Key"}
+                </span>
+              </button>
+              <button
+                className="xy-agent-provider-delete"
+                type="button"
+                title="删除自定义厂商"
+                onClick={() => onDeleteCustom(providerId)}
+              >
+                <Trash2 size={12} strokeWidth={1.8} />
+              </button>
+            </div>
+          );
+        })}
+        <button
+          className={`xy-agent-provider xy-agent-provider--new ${
+            draft.providerId === "custom" ? "is-active" : ""
+          }`}
+          type="button"
+          style={
+            {
+              "--xy-provider-color": "#64748B",
+            } as CSSProperties
+          }
+          onClick={handleNewCustom}
+        >
+          <span className="xy-provider-icon">
+            <Plus size={14} strokeWidth={1.8} />
+          </span>
+          <span className="xy-provider-label">新增自定义</span>
+        </button>
       </div>
 
       <div className="xy-agent-fields">
@@ -1711,80 +1716,6 @@ function AgentConfigCard({
           />
         </label>
 
-        <div className="xy-agent-model-fetch xy-field--wide">
-          <div className="xy-agent-model-fetch-head">
-            <span>模型列表</span>
-            <button
-              className="xy-mini-btn xy-mini-btn--compact"
-              type="button"
-              disabled={fetchingModels || usesOfficial || saving || applying}
-              title={
-                usesOfficial
-                  ? "官方登录不支持拉取模型列表"
-                  : "从当前厂商获取模型列表"
-              }
-              onClick={() => void handleFetchModels()}
-            >
-              {fetchingModels ? (
-                <Loader2 className="xy-spin" size={12} strokeWidth={1.8} />
-              ) : (
-                <Download size={12} strokeWidth={1.8} />
-              )}
-              获取模型
-            </button>
-          </div>
-          {modelFetchMessage && (
-            <span className={`xy-agent-model-fetch-msg is-${modelFetchMessage.tone}`}>
-              {modelFetchMessage.text}
-            </span>
-          )}
-          {fetchedModels.length > 0 && (
-            <div className="xy-agent-model-list">
-              {fetchedModels.map((model) => (
-                <div className="xy-agent-model-item" key={model.id}>
-                  <button
-                    className="xy-agent-model-main"
-                    type="button"
-                    title={model.id}
-                    onClick={() => applyFetchedModel(model.id)}
-                  >
-                    <strong>{model.id}</strong>
-                    {model.ownedBy && <small>{model.ownedBy}</small>}
-                  </button>
-                  {tool === "claude" && (
-                    <div className="xy-agent-model-roles">
-                      <button
-                        type="button"
-                        onClick={() => applyFetchedModel(model.id, "sonnetModel")}
-                      >
-                        Sonnet
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyFetchedModel(model.id, "opusModel")}
-                      >
-                        Opus
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyFetchedModel(model.id, "haikuModel")}
-                      >
-                        Haiku
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyFetchedModel(model.id, "model")}
-                      >
-                        兜底
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
         {tool === "claude" ? (
           <div className="xy-agent-role-models xy-field--wide">
             <span className="xy-agent-role-title">Claude 模型角色</span>
@@ -1836,47 +1767,163 @@ function AgentConfigCard({
           </label>
         )}
 
-        <div className="xy-field xy-field--wide">
-          <div className="xy-field-head">
-            <span>{tool === "claude" ? "完整 settings.json" : "完整 config.toml"}</span>
-            <button
-              className="xy-mini-btn xy-mini-btn--compact"
-              type="button"
-              title="同步表单到完整配置"
-              onClick={() =>
+        <div className="xy-agent-detail-switch xy-field--wide">
+          <button
+            className={`xy-agent-detail-btn ${
+              activeDetail === "models" ? "is-active" : ""
+            }`}
+            type="button"
+            onClick={() =>
+              setActiveDetail(activeDetail === "models" ? null : "models")
+            }
+          >
+            <Download size={13} strokeWidth={1.8} />
+            模型列表
+          </button>
+          <button
+            className={`xy-agent-detail-btn ${
+              activeDetail === "config" ? "is-active" : ""
+            }`}
+            type="button"
+            onClick={() =>
+              setActiveDetail(activeDetail === "config" ? null : "config")
+            }
+          >
+            <RefreshCw size={13} strokeWidth={1.8} />
+            完整配置
+          </button>
+        </div>
+
+        {activeDetail === "models" && (
+          <div className="xy-agent-model-fetch xy-field--wide">
+            <div className="xy-agent-model-fetch-head">
+              <span>模型列表</span>
+              <button
+                className="xy-mini-btn xy-mini-btn--compact"
+                type="button"
+                disabled={fetchingModels || usesOfficial || saving || applying}
+                title={
+                  usesOfficial
+                    ? "官方登录不支持拉取模型列表"
+                    : "从当前厂商获取模型列表"
+                }
+                onClick={() => void handleFetchModels()}
+              >
+                {fetchingModels ? (
+                  <Loader2 className="xy-spin" size={12} strokeWidth={1.8} />
+                ) : (
+                  <Download size={12} strokeWidth={1.8} />
+                )}
+                获取模型
+              </button>
+            </div>
+            {modelFetchMessage && (
+              <span
+                className={`xy-agent-model-fetch-msg is-${modelFetchMessage.tone}`}
+              >
+                {modelFetchMessage.text}
+              </span>
+            )}
+            {fetchedModels.length > 0 && (
+              <div className="xy-agent-model-list">
+                {fetchedModels.map((model) => (
+                  <div className="xy-agent-model-item" key={model.id}>
+                    <button
+                      className="xy-agent-model-main"
+                      type="button"
+                      title={model.id}
+                      onClick={() => applyFetchedModel(model.id)}
+                    >
+                      <strong>{model.id}</strong>
+                      {model.ownedBy && <small>{model.ownedBy}</small>}
+                    </button>
+                    {tool === "claude" && (
+                      <div className="xy-agent-model-roles">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyFetchedModel(model.id, "sonnetModel")
+                          }
+                        >
+                          Sonnet
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyFetchedModel(model.id, "opusModel")
+                          }
+                        >
+                          Opus
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyFetchedModel(model.id, "haikuModel")
+                          }
+                        >
+                          Haiku
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => applyFetchedModel(model.id, "model")}
+                        >
+                          兜底
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeDetail === "config" && (
+          <div className="xy-field xy-field--wide">
+            <div className="xy-field-head">
+              <span>
+                {tool === "claude" ? "完整 settings.json" : "完整 config.toml"}
+              </span>
+              <button
+                className="xy-mini-btn xy-mini-btn--compact"
+                type="button"
+                title="同步表单到完整配置"
+                onClick={() =>
+                  updateDraft(
+                    {
+                      extraConfig: buildAgentFullConfig(
+                        tool,
+                        draft,
+                        draft.extraConfig,
+                      ),
+                    },
+                    { syncFullConfig: false },
+                  )
+                }
+              >
+                <RefreshCw size={12} strokeWidth={1.8} />
+                同步表单
+              </button>
+            </div>
+            <textarea
+              className="xy-agent-config-editor"
+              value={draft.extraConfig}
+              rows={10}
+              spellCheck={false}
+              placeholder={
+                tool === "claude"
+                  ? '{\n  "env": {\n    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",\n    "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash"\n  }\n}'
+                  : 'model_provider = "xuya_custom_new-api"\nmodel = "gpt-5-codex"\nmodel_reasoning_effort = "high"\ndisable_response_storage = true\n\n[model_providers.xuya_custom_new-api]\nname = "new-api"\nbase_url = "https://api.example.com/v1"\nwire_api = "responses"\nexperimental_bearer_token = "${CODEX_API_KEY}"'
+              }
+              onChange={(e) =>
                 updateDraft(
-                  {
-                    extraConfig: buildAgentFullConfig(
-                      tool,
-                      draft,
-                      draft.extraConfig,
-                    ),
-                  },
+                  { extraConfig: e.target.value },
                   { syncFullConfig: false },
                 )
               }
-            >
-              <RefreshCw size={12} strokeWidth={1.8} />
-              同步表单
-            </button>
+            />
           </div>
-          <textarea
-            className="xy-agent-config-editor"
-            value={draft.extraConfig}
-            spellCheck={false}
-            placeholder={
-              tool === "claude"
-                ? '{\n  "env": {\n    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",\n    "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash"\n  }\n}'
-                : 'model_provider = "xuya_custom_new-api"\nmodel = "gpt-5-codex"\nmodel_reasoning_effort = "high"\ndisable_response_storage = true\n\n[model_providers.xuya_custom_new-api]\nname = "new-api"\nbase_url = "https://api.example.com/v1"\nwire_api = "responses"\nexperimental_bearer_token = "${CODEX_API_KEY}"'
-            }
-            onChange={(e) =>
-              updateDraft(
-                { extraConfig: e.target.value },
-                { syncFullConfig: false },
-              )
-            }
-          />
-        </div>
+        )}
       </div>
 
       <div className="xy-agent-card-foot">

@@ -1,6 +1,7 @@
 //! Tauri commands for PTY management.
 
 use crate::state::AppState;
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use serde_json::Value;
@@ -376,8 +377,8 @@ fn read_agent_config_state() -> Result<AgentConfigState, String> {
     let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
     let claude_path = claude_settings_path(&home);
     let codex_path = codex_config_path(&home);
-    let claude_store = read_custom_provider_store(&claude_providers_path(&home))?;
-    let codex_store = read_custom_provider_store(&codex_providers_path(&home))?;
+    let claude_store = read_custom_provider_store(&home, "claude")?;
+    let codex_store = read_custom_provider_store(&home, "codex")?;
 
     Ok(AgentConfigState {
         claude: read_claude_config_state(&claude_path, &claude_store.providers),
@@ -401,8 +402,7 @@ fn save_agent_custom_provider_inner(
 ) -> Result<AgentCustomProviderSummary, String> {
     let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
     let tool = parse_agent_tool(&request.tool)?;
-    let path = custom_provider_store_path(&home, tool);
-    let mut store = read_custom_provider_store(&path)?;
+    let mut store = read_custom_provider_store(&home, tool)?;
     let name = clean_optional_text(Some(request.name.as_str()))
         .ok_or_else(|| "Custom provider name is required".to_string())?;
     let base_url = normalize_agent_base_url(tool, &request.base_url)?;
@@ -451,21 +451,20 @@ fn save_agent_custom_provider_inner(
         store.providers.push(provider.clone());
     }
 
-    write_custom_provider_store(&path, &store)?;
+    write_custom_provider_store(&home, tool, &store)?;
     summarize_custom_provider(tool, &provider)
 }
 
 fn delete_agent_custom_provider_inner(tool: &str, provider_id: &str) -> Result<(), String> {
     let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
     let tool = parse_agent_tool(tool)?;
-    let path = custom_provider_store_path(&home, tool);
-    let mut store = read_custom_provider_store(&path)?;
+    let mut store = read_custom_provider_store(&home, tool)?;
     let target_id = custom_provider_id_from_selector(provider_id)
         .or_else(|| clean_optional_text(Some(provider_id)))
         .ok_or_else(|| "Custom provider id is required".to_string())?;
 
     store.providers.retain(|provider| provider.id != target_id);
-    write_custom_provider_store(&path, &store)
+    write_custom_provider_store(&home, tool, &store)
 }
 
 async fn fetch_agent_provider_models_inner(
@@ -478,7 +477,7 @@ async fn fetch_agent_provider_models_inner(
         return Err("Provider is required".to_string());
     }
 
-    let store = read_custom_provider_store(&custom_provider_store_path(&home, tool))?;
+    let store = read_custom_provider_store(&home, tool)?;
     let custom_id = custom_provider_id_from_selector(provider_id);
     let stored_custom = custom_id
         .as_deref()
@@ -514,7 +513,7 @@ fn apply_claude_provider_config(
     if provider_id.is_empty() {
         return Err("Provider is required".to_string());
     }
-    let custom_store = read_custom_provider_store(&claude_providers_path(home))?;
+    let custom_store = read_custom_provider_store(home, "claude")?;
     let custom_id = custom_provider_id_from_selector(&provider_id);
     let stored_custom = custom_id
         .as_deref()
@@ -655,7 +654,7 @@ fn apply_codex_provider_config(
         return Err("Provider is required".to_string());
     }
 
-    let custom_store = read_custom_provider_store(&codex_providers_path(home))?;
+    let custom_store = read_custom_provider_store(home, "codex")?;
     let custom_id = custom_provider_id_from_selector(&provider_id);
     let stored_custom = custom_id
         .as_deref()
@@ -976,12 +975,8 @@ fn codex_providers_path(home: &Path) -> PathBuf {
     home.join(".codex").join("xuya-providers.json")
 }
 
-fn custom_provider_store_path(home: &Path, tool: &str) -> PathBuf {
-    match tool {
-        "claude" => claude_providers_path(home),
-        "codex" => codex_providers_path(home),
-        _ => home.join(".xuya").join("xuya-providers.json"),
-    }
+fn agent_provider_db_path(home: &Path) -> PathBuf {
+    home.join(".xuya").join("agent-providers.sqlite")
 }
 
 fn parse_agent_tool(tool: &str) -> Result<&'static str, String> {
@@ -992,25 +987,153 @@ fn parse_agent_tool(tool: &str) -> Result<&'static str, String> {
     }
 }
 
-fn read_custom_provider_store(path: &Path) -> Result<AgentCustomProviderStore, String> {
-    if !path.exists() {
-        return Ok(AgentCustomProviderStore::default());
+fn read_custom_provider_store(home: &Path, tool: &str) -> Result<AgentCustomProviderStore, String> {
+    let conn = open_agent_provider_db(home)?;
+    migrate_legacy_provider_store(home, tool, &conn)?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, base_url, api_key, model, haiku_model, sonnet_model, opus_model, extra_config
+             FROM agent_providers
+             WHERE tool = ?1
+             ORDER BY name COLLATE NOCASE, id",
+        )
+        .map_err(|e| format!("Failed to prepare provider query: {e}"))?;
+    let rows = stmt
+        .query_map(params![tool], |row| {
+            Ok(AgentCustomProvider {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                base_url: row.get(2)?,
+                api_key: row.get(3)?,
+                model: row.get(4)?,
+                haiku_model: row.get(5)?,
+                sonnet_model: row.get(6)?,
+                opus_model: row.get(7)?,
+                extra_config: row.get(8)?,
+            })
+        })
+        .map_err(|e| format!("Failed to read custom providers: {e}"))?;
+
+    let mut providers = Vec::new();
+    for row in rows {
+        providers.push(row.map_err(|e| format!("Failed to decode custom provider: {e}"))?);
     }
-    let text =
-        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    if text.trim().is_empty() {
-        return Ok(AgentCustomProviderStore::default());
-    }
-    serde_json::from_str(&text).map_err(|e| format!("Failed to parse {}: {e}", path.display()))
+    Ok(AgentCustomProviderStore { providers })
 }
 
 fn write_custom_provider_store(
-    path: &Path,
+    home: &Path,
+    tool: &str,
     store: &AgentCustomProviderStore,
 ) -> Result<(), String> {
-    let value = serde_json::to_value(store)
-        .map_err(|e| format!("Failed to serialize custom providers: {e}"))?;
-    write_json_pretty_atomic(path, &value)
+    let mut conn = open_agent_provider_db(home)?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("Failed to open provider transaction: {e}"))?;
+    tx.execute("DELETE FROM agent_providers WHERE tool = ?1", params![tool])
+        .map_err(|e| format!("Failed to clear custom providers: {e}"))?;
+    for provider in &store.providers {
+        tx.execute(
+            "INSERT INTO agent_providers (
+                tool, id, name, base_url, api_key, model, haiku_model, sonnet_model, opus_model, extra_config
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                tool,
+                provider.id,
+                provider.name,
+                provider.base_url,
+                provider.api_key,
+                provider.model,
+                provider.haiku_model,
+                provider.sonnet_model,
+                provider.opus_model,
+                provider.extra_config,
+            ],
+        )
+        .map_err(|e| format!("Failed to save custom provider {}: {e}", provider.id))?;
+    }
+    tx.commit()
+        .map_err(|e| format!("Failed to commit custom providers: {e}"))
+}
+
+fn open_agent_provider_db(home: &Path) -> Result<Connection, String> {
+    let path = agent_provider_db_path(home);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+    }
+    let conn =
+        Connection::open(&path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_providers (
+            tool TEXT NOT NULL,
+            id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            api_key TEXT NOT NULL DEFAULT '',
+            model TEXT,
+            haiku_model TEXT,
+            sonnet_model TEXT,
+            opus_model TEXT,
+            extra_config TEXT,
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            PRIMARY KEY (tool, id)
+        );",
+    )
+    .map_err(|e| format!("Failed to initialize provider database: {e}"))?;
+    Ok(conn)
+}
+
+fn migrate_legacy_provider_store(home: &Path, tool: &str, conn: &Connection) -> Result<(), String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM agent_providers WHERE tool = ?1",
+            params![tool],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to inspect provider database: {e}"))?;
+    if count > 0 {
+        return Ok(());
+    }
+
+    let legacy_path = match tool {
+        "claude" => claude_providers_path(home),
+        "codex" => codex_providers_path(home),
+        _ => return Ok(()),
+    };
+    if !legacy_path.exists() {
+        return Ok(());
+    }
+
+    let text = fs::read_to_string(&legacy_path)
+        .map_err(|e| format!("Failed to read {}: {e}", legacy_path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    let store = serde_json::from_str::<AgentCustomProviderStore>(&text)
+        .map_err(|e| format!("Failed to parse {}: {e}", legacy_path.display()))?;
+    for provider in store.providers {
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_providers (
+                tool, id, name, base_url, api_key, model, haiku_model, sonnet_model, opus_model, extra_config
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                tool,
+                provider.id,
+                provider.name,
+                provider.base_url,
+                provider.api_key,
+                provider.model,
+                provider.haiku_model,
+                provider.sonnet_model,
+                provider.opus_model,
+                provider.extra_config,
+            ],
+        )
+        .map_err(|e| format!("Failed to migrate custom provider: {e}"))?;
+    }
+    Ok(())
 }
 
 fn summarize_custom_provider(

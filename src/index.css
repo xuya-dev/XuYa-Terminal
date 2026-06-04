@@ -2071,14 +2071,14 @@ body,
 
 .xy-agent-provider-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
 .xy-agent-provider {
   display: inline-flex;
   min-width: 0;
-  height: 30px;
+  height: 34px;
   align-items: center;
   gap: 7px;
   padding: 0 8px;
@@ -2126,63 +2126,25 @@ body,
   white-space: nowrap;
 }
 
-.xy-agent-custom-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 9px;
-  background: color-mix(in srgb, var(--xy-surface) 72%, transparent);
-  border: 1px solid var(--xy-border-soft);
-  border-radius: var(--xy-radius-sm);
-}
-
-.xy-agent-custom-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--xy-fg-faint);
-  font-size: 11.5px;
-  font-weight: 700;
-}
-
-.xy-agent-custom-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.xy-agent-custom-empty {
-  min-height: 28px;
-  display: inline-flex;
-  align-items: center;
-  color: var(--xy-fg-faint);
-  font-size: 11.5px;
-}
-
-.xy-agent-custom-item {
+.xy-agent-provider--saved {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px;
-  min-width: 0;
-  border: 1px solid var(--xy-border);
-  border-radius: var(--xy-radius-sm);
-  background: var(--xy-surface-sunken);
+  gap: 0;
+  padding: 0;
   overflow: hidden;
-  transition: border-color 0.12s, background 0.12s;
+  cursor: default;
 }
 
-.xy-agent-custom-item.is-active {
-  background: color-mix(in srgb, var(--xy-provider-color) 10%, var(--xy-surface));
-  border-color: color-mix(in srgb, var(--xy-provider-color) 58%, var(--xy-border));
+.xy-agent-provider--new {
+  border-style: dashed;
 }
 
-.xy-agent-custom-main {
+.xy-agent-provider-main {
   min-width: 0;
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
-  height: 38px;
   padding: 0 7px;
   background: transparent;
   border: none;
@@ -2192,38 +2154,38 @@ body,
   text-align: left;
 }
 
-.xy-agent-custom-main:hover,
-.xy-agent-custom-delete:hover {
+.xy-agent-provider-main:hover,
+.xy-agent-provider-delete:hover {
   background: color-mix(in srgb, var(--xy-surface-hover) 82%, var(--xy-accent-soft) 18%);
 }
 
-.xy-agent-custom-text {
+.xy-agent-provider-text {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
 
-.xy-agent-custom-text strong,
-.xy-agent-custom-text small {
+.xy-agent-provider-text strong,
+.xy-agent-provider-text small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.xy-agent-custom-text strong {
+.xy-agent-provider-text strong {
   color: var(--xy-fg);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 650;
 }
 
-.xy-agent-custom-text small {
+.xy-agent-provider-text small {
   color: var(--xy-fg-faint);
   font-family: var(--xy-font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
 }
 
-.xy-agent-custom-token {
+.xy-agent-provider-token {
   flex-shrink: 0;
   padding: 2px 5px;
   border-radius: 999px;
@@ -2233,17 +2195,16 @@ body,
   font-weight: 700;
 }
 
-.xy-agent-custom-token.is-ready {
+.xy-agent-provider-token.is-ready {
   background: color-mix(in srgb, var(--xy-success) 12%, var(--xy-surface));
   color: var(--xy-success);
 }
 
-.xy-agent-custom-delete {
+.xy-agent-provider-delete {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 38px;
   background: transparent;
   border: none;
   border-left: 1px solid var(--xy-border-soft);
@@ -2252,7 +2213,7 @@ body,
   transition: background 0.12s, color 0.12s;
 }
 
-.xy-agent-custom-delete:hover {
+.xy-agent-provider-delete:hover {
   color: var(--xy-danger);
 }
 
@@ -2288,7 +2249,41 @@ body,
 }
 
 .xy-agent-config-editor {
-  min-height: 260px;
+  min-height: calc(10 * 1.45em + 16px);
+}
+
+.xy-agent-detail-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.xy-agent-detail-btn {
+  display: inline-flex;
+  min-width: 0;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--xy-surface);
+  border: 1px solid var(--xy-border);
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.xy-agent-detail-btn:hover {
+  background: var(--xy-surface-hover);
+  color: var(--xy-fg);
+}
+
+.xy-agent-detail-btn.is-active {
+  background: var(--xy-accent-soft);
+  border-color: color-mix(in srgb, var(--xy-accent) 42%, var(--xy-border));
+  color: var(--xy-accent-soft-fg);
 }
 
 .xy-agent-model-fetch {
