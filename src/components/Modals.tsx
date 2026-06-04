@@ -942,6 +942,7 @@ function AgentConfigSettings() {
   const [applying, setApplying] = useState<AgentTool | null>(null);
   const [saving, setSaving] = useState<AgentTool | null>(null);
   const [message, setMessage] = useState<AgentConfigMessage | null>(null);
+  const [activeAgent, setActiveAgent] = useState<AgentTool>("claude");
   const [claudeDraft, setClaudeDraft] = useState<AgentDraft>(() =>
     loadAgentDraft("claude"),
   );
@@ -1242,6 +1243,23 @@ function AgentConfigSettings() {
     }
   };
 
+  const agentTabs = [
+    {
+      tool: "claude" as const,
+      title: "Claude Code",
+      endpoint: "/v1/messages",
+      icon: <ClaudeCode size={17} />,
+      configured: Boolean(state?.claude.activeProvider || state?.claude.baseUrl),
+    },
+    {
+      tool: "codex" as const,
+      title: "Codex",
+      endpoint: "/v1/responses",
+      icon: <Codex size={17} />,
+      configured: Boolean(state?.codex.activeProvider || state?.codex.baseUrl),
+    },
+  ];
+
   return (
     <section className="xy-set-section xy-agent-settings">
       <div className="xy-set-section-head">
@@ -1267,43 +1285,77 @@ function AgentConfigSettings() {
         </button>
       </div>
 
-      <div className="xy-agent-grid">
-        <AgentConfigCard
-          tool="claude"
-          title="Claude Code"
-          description="ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN"
-          endpointLabel="/v1/messages"
-          icon={<ClaudeCode size={20} />}
-          providers={CLAUDE_PROVIDER_OPTIONS}
-          draft={claudeDraft}
-          state={state?.claude}
-          applying={applying === "claude"}
-          saving={saving === "claude"}
-          onDraftChange={setClaudeDraft}
-          onSaveCustom={() => void saveCustomProvider("claude", claudeDraft)}
-          onDeleteCustom={(providerId) =>
-            void deleteCustomProvider("claude", providerId)
-          }
-          onApply={() => void applyConfig("claude", claudeDraft, state?.claude)}
-        />
-        <AgentConfigCard
-          tool="codex"
-          title="Codex"
-          description="model_providers.xuya_custom_* + responses"
-          endpointLabel="/v1/responses"
-          icon={<Codex size={20} />}
-          providers={CODEX_PROVIDER_OPTIONS}
-          draft={codexDraft}
-          state={state?.codex}
-          applying={applying === "codex"}
-          saving={saving === "codex"}
-          onDraftChange={setCodexDraft}
-          onSaveCustom={() => void saveCustomProvider("codex", codexDraft)}
-          onDeleteCustom={(providerId) =>
-            void deleteCustomProvider("codex", providerId)
-          }
-          onApply={() => void applyConfig("codex", codexDraft, state?.codex)}
-        />
+      <div className="xy-agent-switch" role="tablist" aria-label="选择 AI 工具配置">
+        {agentTabs.map((tab) => {
+          const isActive = activeAgent === tab.tool;
+          return (
+            <button
+              key={tab.tool}
+              className={`xy-agent-switch-item ${isActive ? "is-active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActiveAgent(tab.tool)}
+            >
+              <span className="xy-agent-switch-icon">{tab.icon}</span>
+              <span className="xy-agent-switch-text">
+                <strong>{tab.title}</strong>
+                <small>{tab.endpoint}</small>
+              </span>
+              <span
+                className={`xy-agent-switch-state ${
+                  tab.configured ? "is-ready" : ""
+                }`}
+              >
+                {tab.configured ? "有配置" : "未配置"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="xy-agent-single">
+        {activeAgent === "claude" ? (
+          <AgentConfigCard
+            tool="claude"
+            title="Claude Code"
+            description="ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN"
+            endpointLabel="/v1/messages"
+            icon={<ClaudeCode size={20} />}
+            providers={CLAUDE_PROVIDER_OPTIONS}
+            draft={claudeDraft}
+            state={state?.claude}
+            applying={applying === "claude"}
+            saving={saving === "claude"}
+            onDraftChange={setClaudeDraft}
+            onSaveCustom={() => void saveCustomProvider("claude", claudeDraft)}
+            onDeleteCustom={(providerId) =>
+              void deleteCustomProvider("claude", providerId)
+            }
+            onApply={() =>
+              void applyConfig("claude", claudeDraft, state?.claude)
+            }
+          />
+        ) : (
+          <AgentConfigCard
+            tool="codex"
+            title="Codex"
+            description="model_providers.xuya_custom_* + responses"
+            endpointLabel="/v1/responses"
+            icon={<Codex size={20} />}
+            providers={CODEX_PROVIDER_OPTIONS}
+            draft={codexDraft}
+            state={state?.codex}
+            applying={applying === "codex"}
+            saving={saving === "codex"}
+            onDraftChange={setCodexDraft}
+            onSaveCustom={() => void saveCustomProvider("codex", codexDraft)}
+            onDeleteCustom={(providerId) =>
+              void deleteCustomProvider("codex", providerId)
+            }
+            onApply={() => void applyConfig("codex", codexDraft, state?.codex)}
+          />
+        )}
       </div>
 
       {message && (
