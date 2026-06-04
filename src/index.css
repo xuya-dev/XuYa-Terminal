@@ -2179,6 +2179,25 @@ body,
   gap: 4px;
 }
 
+.xy-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.xy-field-head > span {
+  min-width: 0;
+}
+
+.xy-field-head .xy-mini-btn {
+  flex-shrink: 0;
+}
+
+.xy-agent-config-editor {
+  min-height: 176px;
+}
+
 .xy-agent-role-models {
   display: flex;
   min-width: 0;

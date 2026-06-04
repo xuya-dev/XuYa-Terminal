@@ -18,6 +18,8 @@ const XUYA_CODEX_PROVIDER_ID: &str = "xuya_custom";
 const CUSTOM_PROVIDER_SELECTOR_PREFIX: &str = "custom:";
 const XUYA_CODEX_EXTRA_BEGIN: &str = "# XuYa custom config begin";
 const XUYA_CODEX_EXTRA_END: &str = "# XuYa custom config end";
+const CLAUDE_TOKEN_PLACEHOLDER: &str = "${ANTHROPIC_AUTH_TOKEN}";
+const CODEX_TOKEN_PLACEHOLDER: &str = "${CODEX_API_KEY}";
 
 const CLAUDE_MANAGED_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
@@ -27,8 +29,6 @@ const CLAUDE_MANAGED_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "API_TIMEOUT_MS",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
 ];
 
 const CODEX_MANAGED_TOP_LEVEL_KEYS: &[&str] = &[
@@ -371,7 +371,7 @@ fn save_agent_custom_provider_inner(
     let haiku_model = normalize_claude_role_model(tool, request.haiku_model.as_deref());
     let sonnet_model = normalize_claude_role_model(tool, request.sonnet_model.as_deref());
     let opus_model = normalize_claude_role_model(tool, request.opus_model.as_deref());
-    let extra_config = normalize_extra_config(tool, request.extra_config.as_deref())?;
+    let extra_config = normalize_full_config(tool, request.extra_config.as_deref())?;
     let id = requested_id.unwrap_or_else(|| unique_custom_provider_id(&store.providers, &name));
 
     let provider = AgentCustomProvider {
@@ -432,14 +432,17 @@ fn apply_claude_provider_config(
         .as_deref()
         .map(|id| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}"))
         .unwrap_or_else(|| provider_id.clone());
-    let extra_config =
-        normalize_extra_config("claude", request.extra_config.as_deref())?.or_else(|| {
+    let current_settings = read_json_or_empty_object(&path)?;
+    let mut settings = clean_optional_text(request.extra_config.as_deref())
+        .or_else(|| {
             stored_custom
                 .as_ref()
                 .and_then(|provider| provider.extra_config.clone())
-        });
-
-    let mut settings = read_json_or_empty_object(&path)?;
+        })
+        .map(|config| parse_claude_full_config(&config))
+        .transpose()?
+        .unwrap_or_else(|| current_settings.clone());
+    let editor_api_key = extract_claude_api_key(&settings);
     let (base_url, endpoint) = {
         let root = ensure_json_object(&mut settings);
         let env_value = root
@@ -451,13 +454,7 @@ fn apply_claude_provider_config(
         let env = env_value
             .as_object_mut()
             .ok_or_else(|| "Failed to access Claude env settings".to_string())?;
-        let existing_api_key = env
-            .get("ANTHROPIC_AUTH_TOKEN")
-            .or_else(|| env.get("ANTHROPIC_API_KEY"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
+        let existing_api_key = extract_claude_api_key(&current_settings).or(editor_api_key);
 
         for key in CLAUDE_MANAGED_ENV_KEYS {
             env.remove(*key);
@@ -545,12 +542,6 @@ fn apply_claude_provider_config(
         (base_url, endpoint)
     };
 
-    if let Some(extra_config) = extra_config {
-        let mut extra = parse_claude_extra_config(&extra_config)?;
-        remove_claude_protected_env_keys(&mut extra);
-        merge_json_value(&mut settings, extra);
-    }
-
     write_json_pretty_atomic(&path, &settings)?;
 
     Ok(AgentConfigApplyResult {
@@ -582,28 +573,37 @@ fn apply_codex_provider_config(
         .as_deref()
         .map(|id| format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{id}"))
         .unwrap_or_else(|| provider_id.clone());
-    let extra_config =
-        normalize_extra_config("codex", request.extra_config.as_deref())?.or_else(|| {
-            stored_custom
-                .as_ref()
-                .and_then(|provider| provider.extra_config.clone())
+    let full_config =
+        normalize_full_config("codex", request.extra_config.as_deref())?.or_else(|| {
+            stored_custom.as_ref().and_then(|provider| {
+                normalize_full_config("codex", provider.extra_config.as_deref())
+                    .ok()
+                    .flatten()
+            })
         });
     let current = fs::read_to_string(&path).unwrap_or_default();
     let current_provider = extract_top_level_toml_string(&current, "model_provider");
-    let existing_api_key = current_provider
-        .as_deref()
-        .and_then(|provider| {
-            extract_codex_provider_string(&current, provider, "experimental_bearer_token")
-        })
-        .or_else(|| {
-            extract_codex_provider_string(
-                &current,
-                XUYA_CODEX_PROVIDER_ID,
-                "experimental_bearer_token",
-            )
-        })
-        .or_else(|| extract_top_level_toml_string(&current, "experimental_bearer_token"));
-    let preserved = strip_codex_managed_config(&current);
+    let existing_api_key = clean_codex_token(current_provider.as_deref().and_then(|provider| {
+        extract_codex_provider_string(&current, provider, "experimental_bearer_token")
+    }))
+    .or_else(|| {
+        clean_codex_token(extract_codex_provider_string(
+            &current,
+            XUYA_CODEX_PROVIDER_ID,
+            "experimental_bearer_token",
+        ))
+    })
+    .or_else(|| {
+        stored_custom
+            .as_ref()
+            .and_then(|provider| clean_codex_token(Some(provider.api_key.clone())))
+    })
+    .or_else(|| {
+        clean_codex_token(extract_top_level_toml_string(
+            &current,
+            "experimental_bearer_token",
+        ))
+    });
     let model = clean_optional_text(request.model.as_deref())
         .or_else(|| {
             stored_custom
@@ -611,13 +611,18 @@ fn apply_codex_provider_config(
                 .and_then(|provider| provider.model.clone())
         })
         .unwrap_or_else(|| "gpt-5-codex".to_string());
+    let codex_provider_id = custom_id
+        .as_deref()
+        .map(codex_custom_provider_id)
+        .unwrap_or_else(|| XUYA_CODEX_PROVIDER_ID.to_string());
 
-    let (prefix, base_url, endpoint) = if provider_id == "official" {
+    let (generated_config, base_url, endpoint, api_key) = if provider_id == "official" {
         (
             format!(
                 "model_provider = \"openai\"\nmodel = {}\n",
                 toml_string(&model)
             ),
+            None,
             None,
             None,
         )
@@ -638,10 +643,6 @@ fn apply_codex_provider_config(
             })
             .or(existing_api_key)
             .ok_or_else(|| "Codex API Key is required".to_string())?;
-        let codex_provider_id = custom_id
-            .as_deref()
-            .map(codex_custom_provider_id)
-            .unwrap_or_else(|| XUYA_CODEX_PROVIDER_ID.to_string());
         let provider_name = stored_custom
             .as_ref()
             .map(|provider| provider.name.as_str())
@@ -655,14 +656,19 @@ fn apply_codex_provider_config(
             provider_id = codex_provider_id,
         );
         let endpoint = codex_responses_endpoint(&base_url);
-        (prefix, Some(base_url), Some(endpoint))
+        (prefix, Some(base_url), Some(endpoint), Some(api_key))
     };
 
-    let next = merge_codex_config(
-        prefix,
-        wrap_codex_extra_config(extra_config.as_deref()),
-        preserved,
-    );
+    let mut next = full_config.unwrap_or_else(|| {
+        let preserved = strip_codex_managed_config(&current);
+        merge_codex_config(generated_config, String::new(), preserved)
+    });
+    if let Some(api_key) = api_key {
+        next = set_codex_provider_token(&next, &codex_provider_id, &api_key);
+    }
+    if !next.ends_with('\n') {
+        next.push('\n');
+    }
     write_text_atomic(&path, &next)?;
 
     Ok(AgentConfigApplyResult {
@@ -926,6 +932,11 @@ fn summarize_custom_provider(
         _ => return Err(format!("Unsupported agent config target: {tool}")),
     };
 
+    let extra_config = provider
+        .extra_config
+        .as_deref()
+        .and_then(|config| normalize_full_config(tool, Some(config)).ok().flatten());
+
     Ok(AgentCustomProviderSummary {
         id: provider.id.clone(),
         name: provider.name.clone(),
@@ -935,8 +946,8 @@ fn summarize_custom_provider(
         haiku_model: provider.haiku_model.clone(),
         sonnet_model: provider.sonnet_model.clone(),
         opus_model: provider.opus_model.clone(),
-        extra_config: provider.extra_config.clone(),
-        token_configured: !provider.api_key.trim().is_empty(),
+        extra_config,
+        token_configured: is_real_token(&provider.api_key, ""),
     })
 }
 
@@ -1006,97 +1017,139 @@ fn normalize_claude_role_model(tool: &str, model: Option<&str>) -> Option<String
     }
 }
 
-fn normalize_extra_config(
-    tool: &str,
-    extra_config: Option<&str>,
-) -> Result<Option<String>, String> {
-    let Some(extra_config) = clean_optional_text(extra_config) else {
+fn normalize_full_config(tool: &str, full_config: Option<&str>) -> Result<Option<String>, String> {
+    let Some(full_config) = clean_optional_text(full_config) else {
         return Ok(None);
     };
     match tool {
-        "claude" => {
-            parse_claude_extra_config(&extra_config)?;
-            Ok(Some(extra_config))
-        }
-        "codex" => {
-            validate_codex_extra_config(&extra_config)?;
-            Ok(Some(extra_config))
-        }
+        "claude" => sanitize_claude_full_config(&full_config).map(Some),
+        "codex" => Ok(Some(sanitize_codex_full_config(&full_config))),
         other => Err(format!("Unsupported agent config target: {other}")),
     }
 }
 
-fn parse_claude_extra_config(extra_config: &str) -> Result<Value, String> {
-    let value = serde_json::from_str::<Value>(extra_config)
-        .map_err(|e| format!("Claude custom config must be a JSON object: {e}"))?;
+fn parse_claude_full_config(full_config: &str) -> Result<Value, String> {
+    let value = serde_json::from_str::<Value>(full_config)
+        .map_err(|e| format!("Claude config must be a JSON object: {e}"))?;
     if !value.is_object() {
-        return Err("Claude custom config must be a JSON object".to_string());
+        return Err("Claude config must be a JSON object".to_string());
     }
     if value.get("env").is_some_and(|env| !env.is_object()) {
-        return Err("Claude custom config env must be a JSON object".to_string());
+        return Err("Claude config env must be a JSON object".to_string());
     }
     Ok(value)
 }
 
-fn remove_claude_protected_env_keys(extra: &mut Value) {
-    let Some(env) = extra.get_mut("env").and_then(Value::as_object_mut) else {
-        return;
-    };
-    for key in [
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    ] {
-        env.remove(key);
-    }
+fn sanitize_claude_full_config(full_config: &str) -> Result<String, String> {
+    let value = parse_claude_full_config(full_config)?;
+    stringify_sanitized_claude_config(value)
 }
 
-fn merge_json_value(target: &mut Value, source: Value) {
-    match (target, source) {
-        (Value::Object(target), Value::Object(source)) => {
-            for (key, value) in source {
-                match target.get_mut(&key) {
-                    Some(existing) => merge_json_value(existing, value),
-                    None => {
-                        target.insert(key, value);
-                    }
-                }
-            }
-        }
-        (target, source) => {
-            *target = source;
-        }
-    }
-}
-
-fn validate_codex_extra_config(extra_config: &str) -> Result<(), String> {
-    let mut section: Option<String> = None;
-    for line in extra_config.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(header) = parse_toml_section_header(trimmed) {
-            if is_xuya_codex_provider_section(&header) {
-                return Err(
-                    "Codex custom config cannot edit XuYa-managed provider sections".to_string(),
+fn stringify_sanitized_claude_config(mut value: Value) -> Result<String, String> {
+    if let Some(env) = value.get_mut("env").and_then(Value::as_object_mut) {
+        for key in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+            if env
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|token| !token.is_empty())
+            {
+                env.insert(
+                    key.to_string(),
+                    Value::String(CLAUDE_TOKEN_PLACEHOLDER.to_string()),
                 );
             }
-            section = Some(header);
-            continue;
-        }
-        if section.is_none() && toml_line_key(trimmed).is_some_and(is_codex_managed_top_level_key) {
-            return Err(
-                "Codex custom config cannot override model/provider fields managed by XuYa"
-                    .to_string(),
-            );
         }
     }
-    Ok(())
+    serde_json::to_string_pretty(&value)
+        .map_err(|e| format!("Failed to serialize Claude config: {e}"))
+}
+
+fn extract_claude_api_key(settings: &Value) -> Option<String> {
+    settings
+        .get("env")
+        .and_then(Value::as_object)
+        .and_then(|env| {
+            env.get("ANTHROPIC_AUTH_TOKEN")
+                .or_else(|| env.get("ANTHROPIC_API_KEY"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != CLAUDE_TOKEN_PLACEHOLDER)
+        .map(str::to_string)
+}
+
+fn is_real_token(value: &str, placeholder: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && (placeholder.is_empty() || value != placeholder)
+}
+
+fn clean_codex_token(value: Option<String>) -> Option<String> {
+    value
+        .and_then(|value| clean_optional_text(Some(value.as_str())))
+        .filter(|value| value != CODEX_TOKEN_PLACEHOLDER)
+}
+
+fn sanitize_codex_full_config(full_config: &str) -> String {
+    full_config
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            if toml_line_key(trimmed).is_some_and(|key| key == "experimental_bearer_token") {
+                let indent = line
+                    .chars()
+                    .take_while(|ch| ch.is_whitespace())
+                    .collect::<String>();
+                format!(
+                    "{indent}experimental_bearer_token = {}",
+                    toml_string(CODEX_TOKEN_PLACEHOLDER)
+                )
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn set_codex_provider_token(text: &str, provider_id: &str, api_key: &str) -> String {
+    let target_section = format!("model_providers.{provider_id}");
+    let mut lines = text.lines().map(str::to_string).collect::<Vec<_>>();
+    let mut section_start = None;
+    let mut section_end = lines.len();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if let Some(section) = parse_toml_section_header(trimmed) {
+            if section_start.is_some() {
+                section_end = index;
+                break;
+            }
+            if section == target_section {
+                section_start = Some(index);
+            }
+        }
+    }
+
+    let token_line = format!("experimental_bearer_token = {}", toml_string(api_key));
+    if let Some(section_start) = section_start {
+        for index in section_start + 1..section_end {
+            if toml_line_key(lines[index].trim())
+                .is_some_and(|key| key == "experimental_bearer_token")
+            {
+                lines[index] = token_line;
+                return lines.join("\n");
+            }
+        }
+        lines.insert(section_end, token_line);
+        return lines.join("\n");
+    }
+
+    if !lines.is_empty() && !lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.push(String::new());
+    }
+    lines.push(format!("[{target_section}]"));
+    lines.push(token_line);
+    lines.join("\n")
 }
 
 fn claude_known_provider_base_url(provider_id: &str) -> Option<&'static str> {
@@ -1221,8 +1274,7 @@ fn read_claude_config_state(
         env.get("ANTHROPIC_AUTH_TOKEN")
             .or_else(|| env.get("ANTHROPIC_API_KEY"))
             .and_then(Value::as_str)
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
+            .is_some_and(|value| is_real_token(value, CLAUDE_TOKEN_PLACEHOLDER))
     });
     let active_provider = if let Some(base_url) = base_url.as_deref() {
         Some(
@@ -1241,11 +1293,7 @@ fn read_claude_config_state(
         None
     };
     let endpoint = base_url.as_deref().map(claude_messages_endpoint);
-    let extra_config = active_provider
-        .as_deref()
-        .and_then(custom_provider_id_from_selector)
-        .and_then(|id| find_custom_provider(custom_providers, &id))
-        .and_then(|provider| provider.extra_config.clone());
+    let extra_config = settings.and_then(|value| stringify_sanitized_claude_config(value).ok());
 
     AgentToolConfigState {
         path: path_to_string(path),
@@ -1281,7 +1329,7 @@ fn read_codex_config_state(
         })
         .or_else(|| extract_top_level_toml_string(&text, "experimental_bearer_token"))
         .as_deref()
-        .is_some_and(|value| !value.trim().is_empty());
+        .is_some_and(|value| is_real_token(value, CODEX_TOKEN_PLACEHOLDER));
     let endpoint = base_url.as_deref().map(codex_responses_endpoint);
     let active_provider = active_config_provider.as_deref().map(|provider| {
         if provider == "openai" {
@@ -1297,11 +1345,7 @@ fn read_codex_config_state(
                 .unwrap_or_else(|| "custom".to_string())
         }
     });
-    let extra_config = active_provider
-        .as_deref()
-        .and_then(custom_provider_id_from_selector)
-        .and_then(|id| find_custom_provider(custom_providers, &id))
-        .and_then(|provider| provider.extra_config.clone());
+    let extra_config = clean_optional_text(Some(sanitize_codex_full_config(&text).as_str()));
 
     AgentToolConfigState {
         path: path_to_string(path),
@@ -1443,13 +1487,6 @@ fn strip_codex_managed_config(text: &str) -> String {
     }
 
     output.join("\n").trim().to_string()
-}
-
-fn wrap_codex_extra_config(extra_config: Option<&str>) -> String {
-    let Some(extra_config) = clean_optional_text(extra_config) else {
-        return String::new();
-    };
-    format!("{XUYA_CODEX_EXTRA_BEGIN}\n{extra_config}\n{XUYA_CODEX_EXTRA_END}")
 }
 
 fn merge_codex_config(prefix: String, extra_config: String, preserved: String) -> String {

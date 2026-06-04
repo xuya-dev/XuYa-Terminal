@@ -370,6 +370,21 @@ function roleModelFallback(provider: AgentProviderOption, role: "haiku" | "sonne
   return provider.opusModel ?? provider.model ?? "";
 }
 
+const CLAUDE_TOKEN_PLACEHOLDER = "${ANTHROPIC_AUTH_TOKEN}";
+const CODEX_TOKEN_PLACEHOLDER = "${CODEX_API_KEY}";
+
+const CODEX_MANAGED_TOP_LEVEL_KEYS = new Set([
+  "base_url",
+  "disable_response_storage",
+  "env_key",
+  "experimental_bearer_token",
+  "model_provider",
+  "model",
+  "model_reasoning_effort",
+  "requires_openai_auth",
+  "wire_api",
+]);
+
 function findProvider(tool: AgentTool, providerId: string) {
   const options = providerOptionsFor(tool);
   if (isCustomProviderId(providerId)) {
@@ -378,9 +393,224 @@ function findProvider(tool: AgentTool, providerId: string) {
   return options.find((option) => option.id === providerId) ?? options[0];
 }
 
+function tomlString(value: string) {
+  return JSON.stringify(value);
+}
+
+function slugifyProviderId(value: string) {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "custom";
+}
+
+function codexConfigProviderId(draft: AgentDraft) {
+  const id = customProviderId(draft.providerId);
+  return `xuya_custom_${slugifyProviderId(id || draft.customName || "custom")}`;
+}
+
+function tryParseObjectConfig(value: string) {
+  if (!value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildClaudeFullConfig(draft: AgentDraft, baseConfig?: string) {
+  const provider = findProvider("claude", draft.providerId);
+  const usesOfficial = !isCustomProviderId(draft.providerId) && provider.id === "official";
+  const config = tryParseObjectConfig(baseConfig ?? draft.extraConfig);
+  const rawEnv = config.env;
+  const env =
+    rawEnv && typeof rawEnv === "object" && !Array.isArray(rawEnv)
+      ? { ...(rawEnv as Record<string, unknown>) }
+      : {};
+
+  delete env.ANTHROPIC_BASE_URL;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_MODEL;
+  delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+  delete env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+  delete env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+
+  if (!usesOfficial && draft.baseUrl.trim()) {
+    env.ANTHROPIC_BASE_URL = normalizeClaudeBaseUrlForPreview(draft.baseUrl);
+    env.ANTHROPIC_AUTH_TOKEN = CLAUDE_TOKEN_PLACEHOLDER;
+  }
+  if (draft.model.trim()) env.ANTHROPIC_MODEL = draft.model.trim();
+  if (draft.haikuModel.trim()) {
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = draft.haikuModel.trim();
+  }
+  if (draft.sonnetModel.trim()) {
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = draft.sonnetModel.trim();
+  }
+  if (draft.opusModel.trim()) {
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = draft.opusModel.trim();
+  }
+
+  const next = { ...config };
+  if (Object.keys(env).length > 0) {
+    next.env = env;
+  } else {
+    delete next.env;
+  }
+  return JSON.stringify(next, null, 2);
+}
+
+function parseTomlSectionHeader(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return undefined;
+  return trimmed.slice(1, -1).trim() || undefined;
+}
+
+function tomlLineKey(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("[")) {
+    return undefined;
+  }
+  const index = trimmed.indexOf("=");
+  if (index === -1) return undefined;
+  return trimmed.slice(0, index).trim() || undefined;
+}
+
+function isXuyaCodexProviderSection(section: string) {
+  const prefix = "model_providers.";
+  if (!section.startsWith(prefix)) return false;
+  const provider = section.slice(prefix.length);
+  return provider === "xuya_custom" || provider.startsWith("xuya_custom_");
+}
+
+function stripCodexManagedConfig(text: string) {
+  const output: string[] = [];
+  let section: string | undefined;
+  let skippingManagedSection = false;
+  let skippingLegacyExtra = false;
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === "# XuYa custom config begin") {
+      skippingLegacyExtra = true;
+      continue;
+    }
+    if (trimmed === "# XuYa custom config end") {
+      skippingLegacyExtra = false;
+      continue;
+    }
+    if (skippingLegacyExtra || trimmed === "# Managed by XuYa Terminal.") {
+      continue;
+    }
+
+    const header = parseTomlSectionHeader(trimmed);
+    if (header) {
+      section = header;
+      skippingManagedSection = isXuyaCodexProviderSection(header);
+    }
+    if (skippingManagedSection) continue;
+    if (!section && CODEX_MANAGED_TOP_LEVEL_KEYS.has(tomlLineKey(trimmed) ?? "")) {
+      continue;
+    }
+    output.push(line);
+  }
+
+  return output.join("\n").trim();
+}
+
+function mergeCodexConfig(prefix: string, preserved: string) {
+  const blocks = [prefix.trim(), preserved.trim()].filter(Boolean);
+  return `${blocks.join("\n\n")}\n`;
+}
+
+function buildCodexFullConfig(draft: AgentDraft, baseConfig?: string) {
+  const provider = findProvider("codex", draft.providerId);
+  const preserved = stripCodexManagedConfig(baseConfig ?? draft.extraConfig);
+  const model = draft.model.trim() || provider.model || "gpt-5-codex";
+  if (provider.id === "official" && !isCustomProviderId(draft.providerId)) {
+    return mergeCodexConfig(
+      `model_provider = "openai"\nmodel = ${tomlString(model)}`,
+      preserved,
+    );
+  }
+
+  const providerId = codexConfigProviderId(draft);
+  const providerName = draft.customName.trim() || "XuYa Custom";
+  const baseUrl = normalizeCodexBaseUrlForPreview(draft.baseUrl);
+  return mergeCodexConfig(
+    `# Managed by XuYa Terminal.
+model_provider = "${providerId}"
+model = ${tomlString(model)}
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.${providerId}]
+name = ${tomlString(providerName)}
+base_url = ${tomlString(baseUrl)}
+wire_api = "responses"
+experimental_bearer_token = ${tomlString(CODEX_TOKEN_PLACEHOLDER)}`,
+    preserved,
+  );
+}
+
+function buildAgentFullConfig(tool: AgentTool, draft: AgentDraft, baseConfig?: string) {
+  return tool === "claude"
+    ? buildClaudeFullConfig(draft, baseConfig)
+    : buildCodexFullConfig(draft, baseConfig);
+}
+
+function draftWithFullConfig(tool: AgentTool, draft: AgentDraft) {
+  return {
+    ...draft,
+    extraConfig: draft.extraConfig.trim()
+      ? draft.extraConfig
+      : buildAgentFullConfig(tool, draft),
+  };
+}
+
+function sanitizeFullConfigForStorage(tool: AgentTool, value: string) {
+  const text = value.trim() ? value : "";
+  if (!text) return text;
+
+  if (tool === "claude") {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const env = parsed.env;
+      if (env && typeof env === "object" && !Array.isArray(env)) {
+        const nextEnv = { ...(env as Record<string, unknown>) };
+        for (const key of ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]) {
+          if (typeof nextEnv[key] === "string" && nextEnv[key].trim()) {
+            nextEnv[key] = CLAUDE_TOKEN_PLACEHOLDER;
+          }
+        }
+        return JSON.stringify({ ...parsed, env: nextEnv }, null, 2);
+      }
+    } catch {
+      // Keep the user's in-progress text shape while removing obvious tokens.
+    }
+
+    return text.replace(
+      /("(?:ANTHROPIC_AUTH_TOKEN|ANTHROPIC_API_KEY)"\s*:\s*")([^"]*)(")/g,
+      (_match, prefix: string, _token: string, suffix: string) =>
+        `${prefix}${CLAUDE_TOKEN_PLACEHOLDER}${suffix}`,
+    );
+  }
+
+  return text.replace(
+    /^(\s*experimental_bearer_token\s*=\s*)(["'])(.*?)(\2)/gm,
+    (_match, prefix: string, quote: string) =>
+      `${prefix}${quote}${CODEX_TOKEN_PLACEHOLDER}${quote}`,
+  );
+}
+
 function defaultAgentDraft(tool: AgentTool): AgentDraft {
   const provider = providerOptionsFor(tool)[0];
-  return {
+  const draft = {
     providerId: provider.id,
     customName: "",
     baseUrl: provider.baseUrl,
@@ -390,6 +620,10 @@ function defaultAgentDraft(tool: AgentTool): AgentDraft {
     sonnetModel: roleModelFallback(provider, "sonnet"),
     opusModel: roleModelFallback(provider, "opus"),
     extraConfig: "",
+  };
+  return {
+    ...draft,
+    extraConfig: buildAgentFullConfig(tool, draft, ""),
   };
 }
 
@@ -405,7 +639,7 @@ function loadAgentDraft(tool: AgentTool): AgentDraft {
         ? parsed.providerId
         : fallback.providerId;
     const provider = findProvider(tool, parsedProviderId);
-    return {
+    const draft = {
       providerId: isCustomProviderId(parsedProviderId)
         ? parsedProviderId
         : provider.id,
@@ -431,7 +665,15 @@ function loadAgentDraft(tool: AgentTool): AgentDraft {
           ? parsed.opusModel
           : roleModelFallback(provider, "opus"),
       extraConfig:
-        typeof parsed.extraConfig === "string" ? parsed.extraConfig : "",
+        typeof parsed.extraConfig === "string"
+          ? sanitizeFullConfigForStorage(tool, parsed.extraConfig)
+          : "",
+    };
+    return {
+      ...draft,
+      extraConfig: draft.extraConfig.trim()
+        ? draft.extraConfig
+        : buildAgentFullConfig(tool, draft, ""),
     };
   } catch {
     return fallback;
@@ -449,7 +691,7 @@ function persistAgentDraft(tool: AgentTool, draft: AgentDraft) {
       haikuModel: draft.haikuModel,
       sonnetModel: draft.sonnetModel,
       opusModel: draft.opusModel,
-      extraConfig: draft.extraConfig,
+      extraConfig: sanitizeFullConfigForStorage(tool, draft.extraConfig),
     }),
   );
 }
@@ -818,22 +1060,23 @@ function AgentConfigSettings() {
     draft: AgentDraft,
     options: { silent?: boolean } = {},
   ) => {
-    if (!draft.customName.trim()) {
+    const draftToSave = draftWithFullConfig(tool, draft);
+    if (!draftToSave.customName.trim()) {
       setMessage({ tone: "error", text: "请先填写自定义厂商名称。" });
       return null;
     }
-    if (!draft.baseUrl.trim()) {
+    if (!draftToSave.baseUrl.trim()) {
       setMessage({ tone: "error", text: "请先填写服务端点。" });
       return null;
     }
 
     const currentCustom = findCustomProvider(
-      draft.providerId,
+      draftToSave.providerId,
       tool === "claude"
         ? state?.claude.customProviders
         : state?.codex.customProviders,
     );
-    if (!draft.apiKey.trim() && !currentCustom?.tokenConfigured) {
+    if (!draftToSave.apiKey.trim() && !currentCustom?.tokenConfigured) {
       setMessage({ tone: "error", text: "请先填写 API Key。" });
       return null;
     }
@@ -848,15 +1091,15 @@ function AgentConfigSettings() {
         {
           request: {
             tool,
-            providerId: customProviderId(draft.providerId),
-            name: draft.customName,
-            baseUrl: draft.baseUrl,
-            apiKey: draft.apiKey,
-            model: draft.model,
-            haikuModel: draft.haikuModel,
-            sonnetModel: draft.sonnetModel,
-            opusModel: draft.opusModel,
-            extraConfig: draft.extraConfig,
+            providerId: customProviderId(draftToSave.providerId),
+            name: draftToSave.customName,
+            baseUrl: draftToSave.baseUrl,
+            apiKey: draftToSave.apiKey,
+            model: draftToSave.model,
+            haikuModel: draftToSave.haikuModel,
+            sonnetModel: draftToSave.sonnetModel,
+            opusModel: draftToSave.opusModel,
+            extraConfig: draftToSave.extraConfig,
           },
         },
       );
@@ -925,7 +1168,7 @@ function AgentConfigSettings() {
     draft: AgentDraft,
     currentState?: AgentToolConfigState,
   ) => {
-    let nextDraft = draft;
+    let nextDraft = draftWithFullConfig(tool, draft);
     let provider = findProvider(tool, nextDraft.providerId);
     if (isCustomProviderId(nextDraft.providerId)) {
       const saved = await saveCustomProvider(tool, nextDraft, { silent: true });
@@ -944,11 +1187,11 @@ function AgentConfigSettings() {
       };
       provider = findProvider(tool, nextDraft.providerId);
     } else if (provider.id !== "official") {
-      if (!draft.baseUrl.trim()) {
+      if (!nextDraft.baseUrl.trim()) {
         setMessage({ tone: "error", text: "请先填写服务端点。" });
         return;
       }
-      if (!draft.apiKey.trim() && !currentState?.tokenConfigured) {
+      if (!nextDraft.apiKey.trim() && !currentState?.tokenConfigured) {
         setMessage({ tone: "error", text: "请先填写 API Key。" });
         return;
       }
@@ -1118,8 +1361,19 @@ function AgentConfigCard({
   const builtInProviders = providers.filter((provider) => provider.id !== "custom");
   const endpoint = endpointPreview(tool, draft.baseUrl);
 
-  const updateDraft = (patch: Partial<AgentDraft>) => {
-    onDraftChange({ ...draft, ...patch });
+  const updateDraft = (
+    patch: Partial<AgentDraft>,
+    options: { syncFullConfig?: boolean } = {},
+  ) => {
+    const syncFullConfig = options.syncFullConfig ?? true;
+    const next = { ...draft, ...patch };
+    const configAffecting = Object.keys(patch).some(
+      (key) => key !== "apiKey" && key !== "extraConfig",
+    );
+    if (syncFullConfig && configAffecting) {
+      next.extraConfig = buildAgentFullConfig(tool, next, draft.extraConfig);
+    }
+    onDraftChange(next);
   };
 
   const handleProviderChange = (providerId: string) => {
@@ -1133,7 +1387,6 @@ function AgentConfigCard({
       haikuModel: roleModelFallback(provider, "haiku"),
       sonnetModel: roleModelFallback(provider, "sonnet"),
       opusModel: roleModelFallback(provider, "opus"),
-      extraConfig: "",
     });
   };
 
@@ -1147,12 +1400,12 @@ function AgentConfigCard({
       haikuModel: "",
       sonnetModel: "",
       opusModel: "",
-      extraConfig: "",
     });
   };
 
   const handleCustomSelect = (provider: AgentCustomProviderSummary) => {
-    updateDraft({
+    onDraftChange({
+      ...draft,
       providerId: customProviderSelector(provider.id),
       customName: provider.name,
       baseUrl: provider.baseUrl,
@@ -1161,7 +1414,20 @@ function AgentConfigCard({
       haikuModel: provider.haikuModel ?? "",
       sonnetModel: provider.sonnetModel ?? "",
       opusModel: provider.opusModel ?? "",
-      extraConfig: provider.extraConfig ?? "",
+      extraConfig:
+        provider.extraConfig ??
+        buildAgentFullConfig(tool, {
+          ...draft,
+          providerId: customProviderSelector(provider.id),
+          customName: provider.name,
+          baseUrl: provider.baseUrl,
+          apiKey: "",
+          model: provider.model ?? defaultCustomModel(tool),
+          haikuModel: provider.haikuModel ?? "",
+          sonnetModel: provider.sonnetModel ?? "",
+          opusModel: provider.opusModel ?? "",
+          extraConfig: "",
+        }),
     });
   };
 
@@ -1371,19 +1637,47 @@ function AgentConfigCard({
           </label>
         )}
 
-        <label className="xy-field xy-field--wide">
-          <span>自定义参数</span>
+        <div className="xy-field xy-field--wide">
+          <div className="xy-field-head">
+            <span>{tool === "claude" ? "完整 settings.json" : "完整 config.toml"}</span>
+            <button
+              className="xy-mini-btn xy-mini-btn--compact"
+              type="button"
+              title="同步表单到完整配置"
+              onClick={() =>
+                updateDraft(
+                  {
+                    extraConfig: buildAgentFullConfig(
+                      tool,
+                      draft,
+                      draft.extraConfig,
+                    ),
+                  },
+                  { syncFullConfig: false },
+                )
+              }
+            >
+              <RefreshCw size={12} strokeWidth={1.8} />
+              同步表单
+            </button>
+          </div>
           <textarea
+            className="xy-agent-config-editor"
             value={draft.extraConfig}
             spellCheck={false}
             placeholder={
               tool === "claude"
-                ? '{\n  "env": {\n    "API_TIMEOUT_MS": "600000"\n  }\n}'
-                : 'approval_policy = "never"\nsandbox_mode = "danger-full-access"'
+                ? '{\n  "env": {\n    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",\n    "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash"\n  }\n}'
+                : 'model_provider = "xuya_custom_new-api"\nmodel = "gpt-5-codex"\nmodel_reasoning_effort = "high"\ndisable_response_storage = true\n\n[model_providers.xuya_custom_new-api]\nname = "new-api"\nbase_url = "https://api.example.com/v1"\nwire_api = "responses"\nexperimental_bearer_token = "${CODEX_API_KEY}"'
             }
-            onChange={(e) => updateDraft({ extraConfig: e.target.value })}
+            onChange={(e) =>
+              updateDraft(
+                { extraConfig: e.target.value },
+                { syncFullConfig: false },
+              )
+            }
           />
-        </label>
+        </div>
       </div>
 
       <div className="xy-agent-card-foot">
