@@ -28,6 +28,37 @@ const FAMILY_KEY = "xuya-theme-family";
 const MODE_KEY = "xuya-theme-mode";
 const DEFAULT_FAMILY = "auroraGlacier";
 
+function getRelativeLuminance(channel: number) {
+  const normalized = channel / 255;
+  return normalized <= 0.03928
+    ? normalized / 12.92
+    : ((normalized + 0.055) / 1.055) ** 2.4;
+}
+
+function getContrastRatio(a: number, b: number) {
+  const light = Math.max(a, b);
+  const dark = Math.min(a, b);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function getReadableTextColor(background: string) {
+  const hex = background.replace("#", "");
+  if (!/^[\da-fA-F]{6}$/.test(hex)) return "#ffffff";
+
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  const luminance =
+    0.2126 * getRelativeLuminance(r) +
+    0.7152 * getRelativeLuminance(g) +
+    0.0722 * getRelativeLuminance(b);
+
+  return getContrastRatio(luminance, 0.01) >
+    getContrastRatio(luminance, 1)
+    ? "#0b1220"
+    : "#ffffff";
+}
+
 /**
  * Map a palette to CSS custom properties. Called whenever family or
  * mode changes. Also bridges the chrome palette into Dockview's own
@@ -67,6 +98,8 @@ export function applyThemeToDOM(palette: ThemePalette, mode: ThemeMode) {
   // Accent + status.
   set("--xy-accent", c.accent);
   set("--xy-accent-hover", c.accentHover);
+  set("--xy-accent-contrast", getReadableTextColor(c.accent));
+  set("--xy-accent-hover-contrast", getReadableTextColor(c.accentHover));
   set("--xy-accent-soft", c.accentSoft);
   set("--xy-accent-soft-fg", c.accentSoftFg);
   set("--xy-success", c.success);

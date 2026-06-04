@@ -36,6 +36,8 @@ body,
 
   --xy-accent: #cba6f7;
   --xy-accent-hover: #b48ce8;
+  --xy-accent-contrast: #0b1220;
+  --xy-accent-hover-contrast: #0b1220;
   --xy-accent-soft: #3a2f55;
   --xy-accent-soft-fg: #e0c8ff;
 
@@ -544,7 +546,7 @@ body,
     );
   border: none;
   border-radius: var(--xy-radius-sm);
-  color: #ffffff;
+  color: var(--xy-accent-contrast);
   font-family: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -561,7 +563,7 @@ body,
       color-mix(in srgb, var(--xy-accent-hover) 88%, white 12%),
       var(--xy-accent-hover)
     );
-  color: #ffffff;
+  color: var(--xy-accent-hover-contrast);
   box-shadow: 0 1px 0 color-mix(in srgb, white 34%, transparent) inset,
     0 8px 18px color-mix(in srgb, var(--xy-accent) 24%, transparent);
 }
@@ -741,14 +743,14 @@ body,
   background: var(--xy-accent);
   border: none;
   border-radius: var(--xy-radius-sm);
-  color: #ffffff;
+  color: var(--xy-accent-contrast);
   cursor: pointer;
   transition: background 0.12s;
 }
 
 .xy-sidebar-rail-btn:hover {
   background: var(--xy-accent-hover);
-  color: #ffffff;
+  color: var(--xy-accent-hover-contrast);
 }
 
 .xy-sidebar-rail-divider {
@@ -1784,7 +1786,7 @@ body,
 
 .xy-seg-item.is-active {
   background: var(--xy-accent);
-  color: #fff;
+  color: var(--xy-accent-contrast);
 }
 
 /* Toggle switch */
@@ -1871,13 +1873,13 @@ body,
 .xy-mini-btn--accent {
   background: var(--xy-accent);
   border-color: var(--xy-accent);
-  color: #ffffff;
+  color: var(--xy-accent-contrast);
 }
 
 .xy-mini-btn--accent:hover {
   background: var(--xy-accent-hover);
   border-color: var(--xy-accent-hover);
-  color: #ffffff;
+  color: var(--xy-accent-hover-contrast);
 }
 
 .xy-update-card {
@@ -2046,12 +2048,13 @@ body,
 .xy-update-btn--primary {
   background: var(--xy-accent);
   border: 1px solid var(--xy-accent);
-  color: #ffffff;
+  color: var(--xy-accent-contrast);
 }
 
 .xy-update-btn--primary:hover {
   background: var(--xy-accent-hover);
   border-color: var(--xy-accent-hover);
+  color: var(--xy-accent-hover-contrast);
 }
 
 .xy-update-btn:disabled,
@@ -2535,7 +2538,7 @@ body,
   background: var(--xy-accent);
   border: none;
   border-radius: var(--xy-radius-sm);
-  color: #fff;
+  color: var(--xy-accent-contrast);
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -2545,6 +2548,7 @@ body,
 
 .xy-watermark-btn:hover {
   background: var(--xy-accent-hover);
+  color: var(--xy-accent-hover-contrast);
 }
 
 .xy-watermark-btn:active {

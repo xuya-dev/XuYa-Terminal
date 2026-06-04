@@ -216,7 +216,7 @@ export default function TerminalView(
       allowProposedApi: true,
       allowTransparency: false,
       drawBoldTextInBrightColors: true,
-      minimumContrastRatio: 1,
+      minimumContrastRatio: 4.5,
     });
 
     // Let the browser raise paste events for terminal text/image paste.
