@@ -279,7 +279,7 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     id: "custom",
     label: "自定义",
     baseUrl: "",
-    color: "#64748B",
+    color: "#8B5CF6",
     icon: <NewAPI size={14} />,
   },
 ];
@@ -300,7 +300,7 @@ const CODEX_PROVIDER_OPTIONS: AgentProviderOption[] = [
     label: "自定义",
     baseUrl: "",
     model: CODEX_DEFAULT_MODEL,
-    color: "#64748B",
+    color: "#8B5CF6",
     icon: <NewAPI size={14} />,
   },
 ];
@@ -1876,6 +1876,13 @@ function AgentConfigSettings() {
     }
   };
 
+  const countConfiguredKeys = (toolState?: AgentToolConfigState | null) => {
+    if (!toolState) return 0;
+    const builtinCount = toolState.builtInProviders.filter((p) => p.tokenConfigured).length;
+    const customCount = toolState.customProviders.filter((p) => p.tokenConfigured).length;
+    return builtinCount + customCount;
+  };
+
   const agentTabs = [
     {
       tool: "claude" as const,
@@ -1883,6 +1890,7 @@ function AgentConfigSettings() {
       endpoint: "/v1/messages",
       icon: <ClaudeCode size={17} />,
       configured: Boolean(state?.claude.activeProvider || state?.claude.baseUrl),
+      keyCount: countConfiguredKeys(state?.claude),
     },
     {
       tool: "codex" as const,
@@ -1890,6 +1898,7 @@ function AgentConfigSettings() {
       endpoint: "/v1/responses",
       icon: <Codex size={17} />,
       configured: Boolean(state?.codex.activeProvider || state?.codex.baseUrl),
+      keyCount: countConfiguredKeys(state?.codex),
     },
   ];
 
@@ -1937,10 +1946,10 @@ function AgentConfigSettings() {
               </span>
               <span
                 className={`xy-agent-switch-state ${
-                  tab.configured ? "is-ready" : ""
+                  tab.configured || tab.keyCount > 0 ? "is-ready" : ""
                 }`}
               >
-                {tab.configured ? "有配置" : "未配置"}
+                {tab.keyCount > 0 ? `已配置 ${tab.keyCount} 个 Key` : (tab.configured ? "有配置" : "未配置")}
               </span>
             </button>
           );
@@ -2466,7 +2475,7 @@ function AgentConfigCard({
               title={isCurrent ? "当前使用中" : undefined}
               style={
                 {
-                  "--xy-provider-color": "#64748B",
+                  "--xy-provider-color": "#8B5CF6",
                 } as CSSProperties
               }
             >
@@ -2518,7 +2527,7 @@ function AgentConfigCard({
           }`}
           style={
             {
-              "--xy-provider-color": "#64748B",
+              "--xy-provider-color": "#8B5CF6",
             } as CSSProperties
           }
         >

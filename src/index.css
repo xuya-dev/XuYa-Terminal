@@ -536,40 +536,35 @@ body,
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--xy-accent) 88%, white 12%),
-      var(--xy-accent)
-    );
-  border: none;
-  border-radius: var(--xy-radius-sm);
+  height: 34px;
+  padding: 0 14px;
+  background: var(--xy-accent);
+  border: 1px solid color-mix(in srgb, var(--xy-accent) 88%, black 12%);
+  border-radius: var(--xy-radius-md);
   color: var(--xy-accent-contrast);
   font-family: inherit;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 1px 0 color-mix(in srgb, white 30%, transparent) inset,
-    0 6px 14px color-mix(in srgb, var(--xy-accent) 18%, transparent);
-  transition: background 0.12s, transform 0.12s, box-shadow 0.12s;
+  box-shadow: 
+    0 1px 1px color-mix(in srgb, white 20%, transparent) inset,
+    0 2px 6px color-mix(in srgb, var(--xy-accent) 16%, transparent);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .xy-sidebar-new-btn:hover {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--xy-accent-hover) 88%, white 12%),
-      var(--xy-accent-hover)
-    );
+  background: var(--xy-accent-hover);
+  border-color: color-mix(in srgb, var(--xy-accent-hover) 85%, black 15%);
   color: var(--xy-accent-hover-contrast);
-  box-shadow: 0 1px 0 color-mix(in srgb, white 34%, transparent) inset,
-    0 8px 18px color-mix(in srgb, var(--xy-accent) 24%, transparent);
+  box-shadow: 
+    0 1px 1px color-mix(in srgb, white 25%, transparent) inset,
+    0 4px 12px color-mix(in srgb, var(--xy-accent-hover) 24%, transparent);
+  transform: translateY(-1px);
 }
 
 .xy-sidebar-new-btn:active {
-  transform: translateY(1px);
+  transform: translateY(0);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--xy-accent) 10%, transparent);
 }
 
 .xy-sidebar-new-chevron {
@@ -741,16 +736,24 @@ body,
   width: 36px;
   height: 36px;
   background: var(--xy-accent);
-  border: none;
-  border-radius: var(--xy-radius-sm);
+  border: 1px solid color-mix(in srgb, var(--xy-accent) 88%, black 12%);
+  border-radius: var(--xy-radius-md);
   color: var(--xy-accent-contrast);
   cursor: pointer;
-  transition: background 0.12s;
+  box-shadow: 
+    0 1px 1px color-mix(in srgb, white 20%, transparent) inset,
+    0 2px 6px color-mix(in srgb, var(--xy-accent) 16%, transparent);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .xy-sidebar-rail-btn:hover {
   background: var(--xy-accent-hover);
+  border-color: color-mix(in srgb, var(--xy-accent-hover) 85%, black 15%);
   color: var(--xy-accent-hover-contrast);
+  box-shadow: 
+    0 1px 1px color-mix(in srgb, white 25%, transparent) inset,
+    0 4px 12px color-mix(in srgb, var(--xy-accent-hover) 24%, transparent);
+  transform: translateY(-1px);
 }
 
 .xy-sidebar-rail-divider {
@@ -3603,25 +3606,34 @@ body,
   align-items: center;
   gap: 7px;
   margin-top: 8px;
-  padding: 9px 16px;
+  padding: 9px 18px;
   background: var(--xy-accent);
-  border: none;
-  border-radius: var(--xy-radius-sm);
+  border: 1px solid color-mix(in srgb, var(--xy-accent) 88%, black 12%);
+  border-radius: var(--xy-radius-md);
   color: var(--xy-accent-contrast);
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s, transform 0.12s;
+  box-shadow: 
+    0 1px 1px color-mix(in srgb, white 20%, transparent) inset,
+    0 2px 6px color-mix(in srgb, var(--xy-accent) 16%, transparent);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .xy-watermark-btn:hover {
   background: var(--xy-accent-hover);
+  border-color: color-mix(in srgb, var(--xy-accent-hover) 85%, black 15%);
   color: var(--xy-accent-hover-contrast);
+  box-shadow: 
+    0 1px 1px color-mix(in srgb, white 25%, transparent) inset,
+    0 4px 12px color-mix(in srgb, var(--xy-accent-hover) 24%, transparent);
+  transform: translateY(-1px);
 }
 
 .xy-watermark-btn:active {
-  transform: translateY(1px);
+  transform: translateY(0);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--xy-accent) 10%, transparent);
 }
 
 .xy-watermark-hint {

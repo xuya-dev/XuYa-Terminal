@@ -35,12 +35,6 @@ function getRelativeLuminance(channel: number) {
     : ((normalized + 0.055) / 1.055) ** 2.4;
 }
 
-function getContrastRatio(a: number, b: number) {
-  const light = Math.max(a, b);
-  const dark = Math.min(a, b);
-  return (light + 0.05) / (dark + 0.05);
-}
-
 function getReadableTextColor(background: string) {
   const hex = background.replace("#", "");
   if (!/^[\da-fA-F]{6}$/.test(hex)) return "#ffffff";
@@ -53,10 +47,7 @@ function getReadableTextColor(background: string) {
     0.7152 * getRelativeLuminance(g) +
     0.0722 * getRelativeLuminance(b);
 
-  return getContrastRatio(luminance, 0.01) >
-    getContrastRatio(luminance, 1)
-    ? "#0b1220"
-    : "#ffffff";
+  return luminance > 0.40 ? "#0b1220" : "#ffffff";
 }
 
 /**
