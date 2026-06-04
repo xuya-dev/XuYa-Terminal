@@ -1846,6 +1846,7 @@ function AgentConfigCard({
   const customProviders = state?.customProviders ?? [];
   const selectedCustom = findCustomProvider(draft.providerId, customProviders);
   const builtInProviders = providers.filter((provider) => provider.id !== "custom");
+  const currentProviderId = resolveStateProviderId(tool, state?.activeProvider);
   const endpoint = endpointPreview(tool, draft.baseUrl);
   const fileLabel =
     tool === "codex"
@@ -1876,6 +1877,7 @@ function AgentConfigCard({
       : "请先填写 API Key";
   const showReadCurrentAction = draft.providerId === "custom";
   const showSaveCustomAction = usesCustom;
+  const showSaveBuiltInAction = !usesCustom;
   const selectedProviderTokenConfigured = usesCustom
     ? Boolean(selectedCustom?.tokenConfigured)
     : Boolean(
@@ -2210,6 +2212,7 @@ function AgentConfigCard({
       <div className="xy-agent-provider-grid">
         {builtInProviders.map((provider) => {
           const isActive = !usesCustom && provider.id === activeProvider.id;
+          const isCurrent = currentProviderId === provider.id;
           const targetDraft = buildBuiltInProviderDraft(provider);
           const tokenConfigured =
             provider.id !== "official" &&
@@ -2222,7 +2225,9 @@ function AgentConfigCard({
               key={provider.id}
               className={`xy-agent-provider xy-agent-provider--builtin ${
                 isActive ? "is-active" : ""
-              }`}
+              } ${isCurrent ? "is-current" : ""}`}
+              aria-current={isCurrent ? "true" : undefined}
+              title={isCurrent ? "当前使用中" : undefined}
               style={
                 {
                   "--xy-provider-color": provider.color,
@@ -2237,20 +2242,27 @@ function AgentConfigCard({
                 <span className="xy-provider-icon">{provider.icon}</span>
                 <span className="xy-provider-label">{provider.label}</span>
               </button>
-              {renderProviderApplyAction({ targetDraft, tokenConfigured })}
+              {isCurrent && (
+                <span className="xy-agent-provider-current">使用中</span>
+              )}
+              {!isCurrent &&
+                renderProviderApplyAction({ targetDraft, tokenConfigured })}
             </div>
           );
         })}
         {customProviders.map((provider) => {
           const providerId = customProviderSelector(provider.id);
           const isActive = providerId === draft.providerId;
+          const isCurrent = currentProviderId === providerId;
           const targetDraft = buildSavedCustomProviderDraft(provider);
           return (
             <div
               key={provider.id}
               className={`xy-agent-provider xy-agent-provider--saved ${
                 isActive ? "is-active" : ""
-              }`}
+              } ${isCurrent ? "is-current" : ""}`}
+              aria-current={isCurrent ? "true" : undefined}
+              title={isCurrent ? "当前使用中" : undefined}
               style={
                 {
                   "--xy-provider-color": "#64748B",
@@ -2273,9 +2285,13 @@ function AgentConfigCard({
                 <span
                   className={`xy-agent-provider-token ${
                     provider.tokenConfigured ? "is-ready" : ""
-                  }`}
+                  } ${isCurrent ? "is-current" : ""}`}
                 >
-                  {provider.tokenConfigured ? "Key" : "缺 Key"}
+                  {isCurrent
+                    ? "使用中"
+                    : provider.tokenConfigured
+                      ? "Key"
+                      : "缺 Key"}
                 </span>
               </button>
               <button
@@ -2286,11 +2302,12 @@ function AgentConfigCard({
               >
                 <Trash2 size={12} strokeWidth={1.8} />
               </button>
-              {renderProviderApplyAction({
-                targetDraft,
-                tokenConfigured: provider.tokenConfigured,
-                hasDelete: true,
-              })}
+              {!isCurrent &&
+                renderProviderApplyAction({
+                  targetDraft,
+                  tokenConfigured: provider.tokenConfigured,
+                  hasDelete: true,
+                })}
             </div>
           );
         })}
@@ -2697,7 +2714,9 @@ function AgentConfigCard({
             端点 {usesOfficial ? "官方登录" : endpoint || "待填写"}
           </span>
         </div>
-        {(showReadCurrentAction || showSaveCustomAction) && (
+        {(showReadCurrentAction ||
+          showSaveCustomAction ||
+          showSaveBuiltInAction) && (
           <div className="xy-agent-actions">
             {showReadCurrentAction && (
               <button
@@ -2722,6 +2741,30 @@ function AgentConfigCard({
                 onClick={onSaveCustom}
               >
                 {saving ? (
+                  <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
+                ) : (
+                  <Save size={13} strokeWidth={1.8} />
+                )}
+                保存
+              </button>
+            )}
+            {showSaveBuiltInAction && (
+              <button
+                className="xy-mini-btn"
+                type="button"
+                disabled={
+                  applying ||
+                  saving ||
+                  !canApplyProvider(draft, selectedProviderTokenConfigured)
+                }
+                title={
+                  canApplyProvider(draft, selectedProviderTokenConfigured)
+                    ? "保存当前内置厂商配置"
+                    : "请先填写 API Key"
+                }
+                onClick={() => onApply(draft)}
+              >
+                {applying ? (
                   <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
                 ) : (
                   <Save size={13} strokeWidth={1.8} />

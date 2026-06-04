@@ -2106,6 +2106,27 @@ body,
   color: var(--xy-fg);
 }
 
+.xy-agent-provider.is-current {
+  background: color-mix(in srgb, var(--xy-provider-color) 7%, var(--xy-surface));
+  border-color: color-mix(in srgb, var(--xy-provider-color) 54%, var(--xy-border));
+  color: var(--xy-fg);
+}
+
+.xy-agent-provider.is-current:not(.is-active) {
+  background: color-mix(in srgb, var(--xy-provider-color) 5%, var(--xy-surface));
+}
+
+.xy-agent-provider.is-current::before {
+  position: absolute;
+  inset: 6px auto 6px 4px;
+  width: 3px;
+  background: var(--xy-provider-color);
+  border-radius: 999px;
+  content: "";
+  opacity: 0.9;
+  pointer-events: none;
+}
+
 .xy-provider-icon {
   display: inline-flex;
   width: 18px;
@@ -2168,9 +2189,32 @@ body,
   padding: 0 8px;
 }
 
+.xy-agent-provider.is-current .xy-agent-provider-main--builtin {
+  padding-right: 58px;
+}
+
 .xy-agent-provider-main:hover,
 .xy-agent-provider-delete:hover {
   background: color-mix(in srgb, var(--xy-surface-hover) 82%, var(--xy-accent-soft) 18%);
+}
+
+.xy-agent-provider-current {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  z-index: 1;
+  display: inline-flex;
+  height: 19px;
+  align-items: center;
+  padding: 0 6px;
+  background: color-mix(in srgb, var(--xy-provider-color) 10%, var(--xy-surface-panel));
+  border: 1px solid color-mix(in srgb, var(--xy-provider-color) 34%, var(--xy-border));
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-provider-color);
+  font-size: 10px;
+  font-weight: 750;
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .xy-agent-provider-hover-actions {
@@ -2201,6 +2245,10 @@ body,
   opacity: 1;
   pointer-events: auto;
   transform: translate(0, -50%);
+}
+
+.xy-agent-provider.is-current .xy-agent-provider-hover-actions {
+  display: none;
 }
 
 .xy-agent-provider-action {
@@ -2286,6 +2334,11 @@ body,
 .xy-agent-provider-token.is-ready {
   background: color-mix(in srgb, var(--xy-success) 12%, var(--xy-surface));
   color: var(--xy-success);
+}
+
+.xy-agent-provider-token.is-current {
+  background: color-mix(in srgb, var(--xy-provider-color) 10%, var(--xy-surface));
+  color: var(--xy-provider-color);
 }
 
 .xy-agent-provider-delete {
