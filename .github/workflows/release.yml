@@ -33,11 +33,40 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare updater signing key
+        shell: pwsh
+        env:
+          RAW_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RAW_TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "Missing TAURI_SIGNING_PRIVATE_KEY secret."
+          }
+
+          $rawKey = $env:RAW_TAURI_SIGNING_PRIVATE_KEY.Trim()
+
+          if ($rawKey.StartsWith("untrusted comment:")) {
+            $normalizedKey = $rawKey -replace "`r`n", "`n"
+            $encodedKey = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($normalizedKey))
+          } else {
+            $encodedKey = $rawKey -replace "\s", ""
+
+            try {
+              $decodedKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedKey))
+            } catch {
+              throw "TAURI_SIGNING_PRIVATE_KEY must be the Tauri-generated base64 private key or the full two-line minisign private key."
+            }
+
+            if (-not $decodedKey.StartsWith("untrusted comment:")) {
+              throw "TAURI_SIGNING_PRIVATE_KEY is missing the private key comment line. Copy the full Tauri-generated private key, not only the encoded key body."
+            }
+          }
+
+          "TAURI_SIGNING_PRIVATE_KEY=$encodedKey" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Publish Tauri release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__

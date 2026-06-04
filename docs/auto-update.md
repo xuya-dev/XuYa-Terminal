@@ -9,6 +9,24 @@ XuYa Terminal 使用 Tauri v2 updater 插件，通过 GitHub Releases 提供 `la
 - `TAURI_SIGNING_PRIVATE_KEY`：`D:\tmp\xuya-tauri-updater.key` 的完整内容。
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：`D:\tmp\xuya-tauri-updater.password` 的完整内容。
 
+`TAURI_SIGNING_PRIVATE_KEY` 必须保留完整私钥。最稳妥的做法是直接复制
+`pnpm tauri signer generate --write-keys <path>` 写出的私钥文件完整内容。
+也可以复制 `pnpm tauri signer generate` 在终端输出的 `Private:` base64 字符串。
+
+如果你使用的是解码后的 minisign 私钥文本，必须复制完整两行：
+
+```text
+untrusted comment: rsign encrypted secret key
+...
+```
+
+不要只复制第二行 encoded key body。缺少第一行 `untrusted comment: ...` 时，
+GitHub Actions 会在 updater 签名阶段报错：
+
+```text
+failed to decode secret key: incorrect updater private key password: Missing comment in secret key
+```
+
 这套私钥和密码必须长期保留。更换私钥后，已经安装的旧版本无法校验后续更新包签名。
 
 ## 发布新版本
