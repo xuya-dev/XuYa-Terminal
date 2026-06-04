@@ -2,6 +2,15 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [0.1.3] - 2026-06-04
+
+### ✨ AI 配置 (AI Config)
+- 设置页面新增 AI 配置标签页，支持在 XuYa Terminal 内快速配置和切换 Claude Code 与 Codex。
+- Claude Code 支持官方、ZhiPu GLM、MiniMax、Kimi、DeepSeek、XiaoMi Mimo 与自定义端点。
+- Codex 支持官方与自定义端点，并固定使用 Responses API 配置。
+- 写入范围保持轻量：Claude Code 写入 `~/.claude/settings.json`，Codex 写入 `~/.codex/config.toml`。
+- 端点能力保持约束：Claude Code 仅展示 `/v1/messages`，Codex 仅展示 `/v1/responses`，不提供反代协议转换。
+
 ## [0.1.2] - 2026-06-04
 
 ### 👷 发布流程 (Release)

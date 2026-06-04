@@ -1,7 +1,16 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-shell";
-import { useEffect, useCallback, useRef, useState, type ReactNode } from "react";
+import { ClaudeCode, Codex } from "@lobehub/icons";
+import {
+  useEffect,
+  useCallback,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import {
   AlertCircle,
   ArrowDown,
@@ -10,8 +19,11 @@ import {
   Download,
   ExternalLink,
   Github,
+  KeyRound,
   Loader2,
   Plus,
+  Save,
+  Server,
   RotateCcw,
   RefreshCw,
   Trash2,
@@ -43,6 +55,7 @@ const CURSOR_OPTIONS: { value: CursorStyle; label: string }[] = [
 ];
 
 const PROJECT_REPOSITORY_URL = "https://github.com/xuya-dev/XuYa-Terminal";
+const APP_VERSION = "0.1.3";
 
 type UpdateStatus =
   | "idle"
@@ -62,8 +75,126 @@ interface UpdateInfo {
 const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
   { value: "appearance", label: "外观" },
   { value: "terminal", label: "终端" },
+  { value: "agents", label: "AI 配置" },
   { value: "sessions", label: "会话菜单" },
 ];
+
+type AgentTool = "claude" | "codex";
+
+interface AgentProviderOption {
+  id: string;
+  label: string;
+  baseUrl: string;
+  model?: string;
+  color: string;
+}
+
+interface AgentDraft {
+  providerId: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+interface AgentToolConfigState {
+  path: string;
+  exists: boolean;
+  activeProvider?: string | null;
+  baseUrl?: string | null;
+  endpoint?: string | null;
+  model?: string | null;
+  tokenConfigured: boolean;
+}
+
+interface AgentConfigState {
+  claude: AgentToolConfigState;
+  codex: AgentToolConfigState;
+}
+
+interface AgentConfigApplyResult {
+  tool: AgentTool;
+  providerId: string;
+  path: string;
+  baseUrl?: string | null;
+  endpoint?: string | null;
+}
+
+type AgentConfigMessage = {
+  tone: "success" | "error" | "info";
+  text: string;
+};
+
+const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
+  {
+    id: "official",
+    label: "官方",
+    baseUrl: "",
+    color: "#D4915D",
+  },
+  {
+    id: "zhipu",
+    label: "ZhiPu GLM",
+    baseUrl: "https://open.bigmodel.cn/api/anthropic",
+    model: "glm-5.1",
+    color: "#0F62FE",
+  },
+  {
+    id: "minimax",
+    label: "MiniMax",
+    baseUrl: "https://api.minimaxi.com/anthropic",
+    model: "MiniMax-M2.7",
+    color: "#FF6B6B",
+  },
+  {
+    id: "kimi",
+    label: "Kimi",
+    baseUrl: "https://api.moonshot.cn/anthropic",
+    model: "kimi-k2.6",
+    color: "#6366F1",
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-pro",
+    color: "#1E88E5",
+  },
+  {
+    id: "xiaomimimo",
+    label: "XiaoMi Mimo",
+    baseUrl: "https://api.xiaomimimo.com/anthropic",
+    model: "mimo-v2.5-pro",
+    color: "#FF6900",
+  },
+  {
+    id: "custom",
+    label: "自定义",
+    baseUrl: "",
+    color: "#64748B",
+  },
+];
+
+const CODEX_PROVIDER_OPTIONS: AgentProviderOption[] = [
+  {
+    id: "official",
+    label: "官方",
+    baseUrl: "",
+    model: "gpt-5-codex",
+    color: "#00A67E",
+  },
+  {
+    id: "custom",
+    label: "自定义",
+    baseUrl: "",
+    model: "gpt-5-codex",
+    color: "#64748B",
+  },
+];
+
+const AGENT_DRAFT_KEYS: Record<AgentTool, string> = {
+  claude: "xuya-agent-config-claude",
+  codex: "xuya-agent-config-codex",
+};
 
 /** Shared centered-modal shell with overlay + Esc-to-close. */
 function ModalShell({
@@ -149,6 +280,90 @@ function Segmented<T extends string>({
       ))}
     </div>
   );
+}
+
+function providerOptionsFor(tool: AgentTool) {
+  return tool === "claude" ? CLAUDE_PROVIDER_OPTIONS : CODEX_PROVIDER_OPTIONS;
+}
+
+function findProvider(tool: AgentTool, providerId: string) {
+  const options = providerOptionsFor(tool);
+  return options.find((option) => option.id === providerId) ?? options[0];
+}
+
+function defaultAgentDraft(tool: AgentTool): AgentDraft {
+  const provider = providerOptionsFor(tool)[0];
+  return {
+    providerId: provider.id,
+    baseUrl: provider.baseUrl,
+    apiKey: "",
+    model: provider.model ?? "",
+  };
+}
+
+function loadAgentDraft(tool: AgentTool): AgentDraft {
+  const fallback = defaultAgentDraft(tool);
+  const raw = localStorage.getItem(AGENT_DRAFT_KEYS[tool]);
+  if (!raw) return fallback;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<AgentDraft>;
+    const provider = findProvider(tool, parsed.providerId ?? fallback.providerId);
+    return {
+      providerId: provider.id,
+      baseUrl:
+        typeof parsed.baseUrl === "string" ? parsed.baseUrl : provider.baseUrl,
+      apiKey: "",
+      model:
+        typeof parsed.model === "string"
+          ? parsed.model
+          : (provider.model ?? ""),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function persistAgentDraft(tool: AgentTool, draft: AgentDraft) {
+  localStorage.setItem(
+    AGENT_DRAFT_KEYS[tool],
+    JSON.stringify({
+      providerId: draft.providerId,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+    }),
+  );
+}
+
+function normalizeClaudeBaseUrlForPreview(value: string) {
+  let base = value.trim().replace(/\/+$/, "");
+  base = base.replace(/\/v1\/messages$/i, "");
+  base = base.replace(/\/messages$/i, "");
+  base = base.replace(/\/v1$/i, "");
+  return base;
+}
+
+function normalizeCodexBaseUrlForPreview(value: string) {
+  let base = value.trim().replace(/\/+$/, "");
+  base = base.replace(/\/responses$/i, "");
+  if (base && !/\/v1$/i.test(base)) base = `${base}/v1`;
+  return base;
+}
+
+function endpointPreview(tool: AgentTool, baseUrl: string) {
+  if (!baseUrl.trim()) return "";
+  if (tool === "claude") {
+    const base = normalizeClaudeBaseUrlForPreview(baseUrl);
+    return base ? `${base}/v1/messages` : "";
+  }
+  const base = normalizeCodexBaseUrlForPreview(baseUrl);
+  return base ? `${base}/responses` : "";
+}
+
+function basenamePath(path?: string | null) {
+  if (!path) return "";
+  const normalized = path.replace(/\\/g, "/");
+  return normalized.split("/").slice(-2).join("/");
 }
 
 /* ──────────────────────────────────────────── */
@@ -333,9 +548,348 @@ function SettingsModal() {
           </section>
         )}
 
+        {activeTab === "agents" && <AgentConfigSettings />}
+
         {activeTab === "sessions" && <SessionMenuSettings />}
       </div>
     </ModalShell>
+  );
+}
+
+function AgentConfigSettings() {
+  const [state, setState] = useState<AgentConfigState | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState<AgentTool | null>(null);
+  const [message, setMessage] = useState<AgentConfigMessage | null>(null);
+  const [claudeDraft, setClaudeDraft] = useState<AgentDraft>(() =>
+    loadAgentDraft("claude"),
+  );
+  const [codexDraft, setCodexDraft] = useState<AgentDraft>(() =>
+    loadAgentDraft("codex"),
+  );
+
+  const loadState = useCallback(async () => {
+    setLoading(true);
+    try {
+      const next = await invoke<AgentConfigState>("get_agent_config_state");
+      setState(next);
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadState();
+  }, [loadState]);
+
+  useEffect(() => {
+    if (!state) return;
+
+    setClaudeDraft((current) => {
+      if (!state.claude.activeProvider && !state.claude.baseUrl) return current;
+      const provider = findProvider(
+        "claude",
+        state.claude.activeProvider ?? current.providerId,
+      );
+      return {
+        ...current,
+        providerId: provider.id,
+        baseUrl: state.claude.baseUrl ?? provider.baseUrl,
+        model: state.claude.model ?? provider.model ?? current.model,
+      };
+    });
+
+    setCodexDraft((current) => {
+      if (!state.codex.activeProvider && !state.codex.baseUrl) return current;
+      const providerId =
+        state.codex.activeProvider === "openai"
+          ? "official"
+          : state.codex.activeProvider
+            ? "custom"
+            : current.providerId;
+      const provider = findProvider("codex", providerId);
+      return {
+        ...current,
+        providerId: provider.id,
+        baseUrl: state.codex.baseUrl ?? provider.baseUrl,
+        model: state.codex.model ?? provider.model ?? current.model,
+      };
+    });
+  }, [state]);
+
+  useEffect(() => persistAgentDraft("claude", claudeDraft), [claudeDraft]);
+  useEffect(() => persistAgentDraft("codex", codexDraft), [codexDraft]);
+
+  const applyConfig = async (
+    tool: AgentTool,
+    draft: AgentDraft,
+    currentState?: AgentToolConfigState,
+  ) => {
+    const provider = findProvider(tool, draft.providerId);
+    if (provider.id !== "official") {
+      if (!draft.baseUrl.trim()) {
+        setMessage({ tone: "error", text: "请先填写服务端点。" });
+        return;
+      }
+      if (!draft.apiKey.trim() && !currentState?.tokenConfigured) {
+        setMessage({ tone: "error", text: "请先填写 API Key。" });
+        return;
+      }
+    }
+
+    setApplying(tool);
+    setMessage({ tone: "info", text: "正在写入配置文件..." });
+    try {
+      const result = await invoke<AgentConfigApplyResult>(
+        "apply_agent_provider_config",
+        {
+          request: {
+            tool,
+            providerId: provider.id,
+            baseUrl: draft.baseUrl,
+            apiKey: draft.apiKey,
+            model: draft.model,
+          },
+        },
+      );
+      await loadState();
+      if (tool === "claude") {
+        setClaudeDraft((current) => ({ ...current, apiKey: "" }));
+      } else {
+        setCodexDraft((current) => ({ ...current, apiKey: "" }));
+      }
+      setMessage({
+        tone: "success",
+        text: `${tool === "claude" ? "Claude Code" : "Codex"} 已切换到 ${
+          provider.label
+        }，写入 ${basenamePath(result.path)}。`,
+      });
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setApplying(null);
+    }
+  };
+
+  return (
+    <section className="xy-set-section xy-agent-settings">
+      <div className="xy-set-section-head">
+        <div>
+          <h3 className="xy-set-section-title">AI 配置</h3>
+          <p className="xy-set-section-hint">
+            只写入 Claude Code 与 Codex 的本地配置文件，不做反代转换
+          </p>
+        </div>
+        <button
+          className="xy-mini-btn"
+          type="button"
+          disabled={loading}
+          onClick={() => void loadState()}
+          title="刷新配置状态"
+        >
+          {loading ? (
+            <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
+          ) : (
+            <RefreshCw size={13} strokeWidth={1.8} />
+          )}
+          刷新
+        </button>
+      </div>
+
+      <div className="xy-agent-grid">
+        <AgentConfigCard
+          tool="claude"
+          title="Claude Code"
+          description="ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN"
+          endpointLabel="/v1/messages"
+          icon={<ClaudeCode size={20} />}
+          providers={CLAUDE_PROVIDER_OPTIONS}
+          draft={claudeDraft}
+          state={state?.claude}
+          applying={applying === "claude"}
+          onDraftChange={setClaudeDraft}
+          onApply={() => void applyConfig("claude", claudeDraft, state?.claude)}
+        />
+        <AgentConfigCard
+          tool="codex"
+          title="Codex"
+          description="model_providers.xuya_custom + responses"
+          endpointLabel="/v1/responses"
+          icon={<Codex size={20} />}
+          providers={CODEX_PROVIDER_OPTIONS}
+          draft={codexDraft}
+          state={state?.codex}
+          applying={applying === "codex"}
+          onDraftChange={setCodexDraft}
+          onApply={() => void applyConfig("codex", codexDraft, state?.codex)}
+        />
+      </div>
+
+      {message && (
+        <div className={`xy-agent-message is-${message.tone}`}>
+          {message.tone === "error" ? (
+            <AlertCircle size={14} strokeWidth={1.8} />
+          ) : message.tone === "success" ? (
+            <CheckCircle2 size={14} strokeWidth={1.8} />
+          ) : (
+            <Loader2 className="xy-spin" size={14} strokeWidth={1.8} />
+          )}
+          <span>{message.text}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AgentConfigCard({
+  tool,
+  title,
+  description,
+  endpointLabel,
+  icon,
+  providers,
+  draft,
+  state,
+  applying,
+  onDraftChange,
+  onApply,
+}: {
+  tool: AgentTool;
+  title: string;
+  description: string;
+  endpointLabel: string;
+  icon: ReactNode;
+  providers: AgentProviderOption[];
+  draft: AgentDraft;
+  state?: AgentToolConfigState;
+  applying: boolean;
+  onDraftChange: (draft: AgentDraft) => void;
+  onApply: () => void;
+}) {
+  const activeProvider = findProvider(tool, draft.providerId);
+  const usesOfficial = activeProvider.id === "official";
+  const endpoint = endpointPreview(tool, draft.baseUrl);
+
+  const updateDraft = (patch: Partial<AgentDraft>) => {
+    onDraftChange({ ...draft, ...patch });
+  };
+
+  const handleProviderChange = (providerId: string) => {
+    const provider = findProvider(tool, providerId);
+    updateDraft({
+      providerId: provider.id,
+      baseUrl: provider.baseUrl,
+      model: provider.model ?? draft.model,
+    });
+  };
+
+  return (
+    <div className="xy-agent-card">
+      <div className="xy-agent-card-head">
+        <span className="xy-agent-card-icon">{icon}</span>
+        <span className="xy-agent-card-title">
+          <span>{title}</span>
+          <small>{description}</small>
+        </span>
+        <span className="xy-agent-card-badge">{endpointLabel}</span>
+      </div>
+
+      <div className="xy-agent-provider-grid">
+        {providers.map((provider) => {
+          const isActive = provider.id === activeProvider.id;
+          return (
+            <button
+              key={provider.id}
+              className={`xy-agent-provider ${isActive ? "is-active" : ""}`}
+              type="button"
+              style={
+                {
+                  "--xy-provider-color": provider.color,
+                } as CSSProperties
+              }
+              onClick={() => handleProviderChange(provider.id)}
+            >
+              <span className="xy-provider-dot" />
+              <span>{provider.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="xy-agent-fields">
+        <label className="xy-field xy-field--wide">
+          <span>
+            <Server size={12} strokeWidth={1.8} />
+            基础地址
+          </span>
+          <input
+            value={draft.baseUrl}
+            disabled={usesOfficial}
+            placeholder={
+              tool === "claude"
+                ? "https://api.example.com/anthropic"
+                : "https://api.example.com/v1"
+            }
+            onChange={(e) => updateDraft({ baseUrl: e.target.value })}
+          />
+        </label>
+
+        <label className="xy-field">
+          <span>
+            <KeyRound size={12} strokeWidth={1.8} />
+            API Key
+          </span>
+          <input
+            value={draft.apiKey}
+            disabled={usesOfficial}
+            type="password"
+            placeholder={state?.tokenConfigured ? "已配置，留空不显示" : "sk-..."}
+            onChange={(e) => updateDraft({ apiKey: e.target.value })}
+          />
+        </label>
+
+        <label className="xy-field">
+          <span>模型</span>
+          <input
+            value={draft.model}
+            placeholder={tool === "claude" ? "可选" : "gpt-5-codex"}
+            onChange={(e) => updateDraft({ model: e.target.value })}
+          />
+        </label>
+      </div>
+
+      <div className="xy-agent-card-foot">
+        <div className="xy-agent-meta">
+          <span title={state?.path}>
+            文件 {state?.path ? basenamePath(state.path) : "未读取"}
+          </span>
+          <span title={state?.endpoint ?? undefined}>
+            端点 {usesOfficial ? "官方登录" : endpoint || "待填写"}
+          </span>
+        </div>
+        <button
+          className="xy-mini-btn xy-mini-btn--accent"
+          type="button"
+          disabled={applying}
+          onClick={onApply}
+        >
+          {applying ? (
+            <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
+          ) : (
+            <Save size={13} strokeWidth={1.8} />
+          )}
+          应用
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -739,7 +1293,7 @@ function AboutModal() {
             <div className="xy-about-tag">面向 AI Agent 工程师的终端管理器</div>
           </div>
           <div className="xy-about-meta">
-            <span>版本 0.1.1</span>
+            <span>版本 {APP_VERSION}</span>
             <span>Tauri v2</span>
             <span>React 19</span>
           </div>

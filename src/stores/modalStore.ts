@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type SettingsTab = "appearance" | "terminal" | "sessions";
+export type SettingsTab = "appearance" | "terminal" | "agents" | "sessions";
 export type ModalKind = "settings" | "about" | null;
 
 interface ModalStore {

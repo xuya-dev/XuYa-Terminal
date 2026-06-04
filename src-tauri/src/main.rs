@@ -21,6 +21,8 @@ fn main() {
             commands::save_temp_image,
             commands::clipboard_has_image,
             commands::find_latest_agent_session,
+            commands::get_agent_config_state,
+            commands::apply_agent_provider_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running XuYa");
