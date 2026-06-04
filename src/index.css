@@ -1592,7 +1592,7 @@ body,
 }
 
 .xy-modal {
-  width: 560px;
+  width: 720px;
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 96px);
   background: var(--xy-surface);
@@ -1648,6 +1648,14 @@ body,
   margin-top: 14px;
 }
 
+.xy-set-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
 .xy-set-section-title {
   font-size: 11px;
   font-weight: 600;
@@ -1655,6 +1663,10 @@ body,
   letter-spacing: 0.07em;
   color: var(--xy-fg-faint);
   margin-bottom: 6px;
+}
+
+.xy-set-section-head .xy-set-section-title {
+  margin-bottom: 4px;
 }
 
 .xy-set-row {
@@ -1756,6 +1768,182 @@ body,
 
 .xy-switch.is-on .xy-switch-knob {
   transform: translateX(18px);
+}
+
+.xy-switch--small {
+  width: 34px;
+  height: 20px;
+}
+
+.xy-switch--small .xy-switch-knob {
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+}
+
+.xy-switch--small.is-on .xy-switch-knob {
+  transform: translateX(14px);
+}
+
+.xy-mini-btn {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  background: var(--xy-surface-sunken);
+  border: 1px solid var(--xy-border);
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.xy-mini-btn:hover {
+  background: var(--xy-surface-hover);
+  border-color: color-mix(in srgb, var(--xy-border) 70%, var(--xy-accent) 30%);
+}
+
+.xy-session-menu-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.xy-session-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.xy-session-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.xy-session-menu-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--xy-fg-muted);
+}
+
+.xy-session-menu-empty {
+  padding: 10px;
+  background: var(--xy-surface-sunken);
+  border: 1px dashed var(--xy-border);
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg-faint);
+  font-size: 12px;
+}
+
+.xy-session-menu-card {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px;
+  background: var(--xy-surface-sunken);
+  border: 1px solid var(--xy-border-soft);
+  border-radius: var(--xy-radius-sm);
+  transition: opacity 0.12s, border-color 0.12s;
+}
+
+.xy-session-menu-card.is-muted {
+  opacity: 0.62;
+}
+
+.xy-session-menu-card-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 118px minmax(220px, 1.6fr);
+  gap: 8px;
+}
+
+.xy-session-menu-card-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.xy-session-menu-card-tools .xy-icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.xy-icon-btn:disabled,
+.xy-icon-btn:disabled:hover {
+  cursor: default;
+  color: var(--xy-fg-faint);
+  background: transparent;
+  transform: none;
+  opacity: 0.5;
+}
+
+.xy-icon-btn.is-danger:hover {
+  background: color-mix(in srgb, var(--xy-danger) 13%, transparent);
+  color: var(--xy-danger);
+}
+
+.xy-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xy-field span {
+  font-size: 11px;
+  color: var(--xy-fg-faint);
+}
+
+.xy-field input,
+.xy-field select {
+  width: 100%;
+  height: 30px;
+  min-width: 0;
+  padding: 0 8px;
+  background: var(--xy-surface);
+  border: 1px solid var(--xy-border);
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.xy-field input::placeholder {
+  color: var(--xy-fg-faint);
+}
+
+.xy-field input:focus,
+.xy-field select:focus {
+  border-color: var(--xy-accent);
+  box-shadow: 0 0 0 2px var(--xy-accent-soft);
+}
+
+@media (max-width: 760px) {
+  .xy-set-section-head,
+  .xy-session-menu-card {
+    flex-direction: column;
+  }
+
+  .xy-session-menu-card-main {
+    grid-template-columns: 1fr;
+  }
+
+  .xy-session-menu-card-tools {
+    justify-content: flex-end;
+  }
 }
 
 /* Zoom control */

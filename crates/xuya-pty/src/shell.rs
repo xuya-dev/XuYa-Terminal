@@ -4,6 +4,7 @@
 
 use anyhow::{bail, Context, Result};
 use portable_pty::CommandBuilder;
+use std::env;
 use std::path::PathBuf;
 use xuya_core::ShellKind;
 
@@ -106,8 +107,76 @@ pub fn resolve_command(kind: &ShellKind, startup_command: Option<&str>) -> Resul
     }
 }
 
+/// Resolve a user-provided full command line into a [`CommandBuilder`].
+pub fn resolve_launch_command(command_line: &str) -> Result<CommandBuilder> {
+    let mut parts = split_command_line(command_line)?;
+    if parts.is_empty() {
+        bail!("launch command is empty");
+    }
+
+    let executable = parts.remove(0);
+    let exe = resolve_executable(&executable)?;
+    let mut cmd = CommandBuilder::new(exe);
+    for arg in parts {
+        cmd.arg(arg);
+    }
+    Ok(cmd)
+}
+
 fn delayed_powershell_command(command: &str) -> String {
     format!("Start-Sleep -Milliseconds 500; & {command}")
+}
+
+fn resolve_executable(value: &str) -> Result<PathBuf> {
+    let path = PathBuf::from(value);
+    if path.is_absolute() || value.contains('\\') || value.contains('/') {
+        if path.exists() {
+            return Ok(path);
+        }
+        bail!("launch executable not found: {value}");
+    }
+
+    find_executable(value).or_else(|_| {
+        if value.contains('.') {
+            bail!("launch executable not found on PATH: {value}");
+        }
+        find_executable(&format!("{value}.exe"))
+            .or_else(|_| find_executable(&format!("{value}.cmd")))
+            .or_else(|_| find_executable(&format!("{value}.bat")))
+            .with_context(|| format!("launch executable not found on PATH: {value}"))
+    })
+}
+
+fn split_command_line(command_line: &str) -> Result<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = command_line.trim().chars().peekable();
+    let mut quote: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' | '\'' if quote.is_none() => quote = Some(ch),
+            '"' | '\'' if quote == Some(ch) => quote = None,
+            '\\' if quote == Some('"') && chars.peek() == Some(&'"') => {
+                current.push('"');
+                chars.next();
+            }
+            ch if ch.is_whitespace() && quote.is_none() => {
+                if !current.is_empty() {
+                    parts.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if quote.is_some() {
+        bail!("launch command has an unterminated quote");
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    Ok(parts)
 }
 
 /// Human-readable name for a shell kind.
@@ -147,22 +216,55 @@ fn find_executable(name: &str) -> Result<PathBuf> {
         }
     }
 
-    // 2. Fallback to `where` command if not in standard paths.
-    let output = std::process::Command::new("where")
-        .arg(name)
-        .output()
-        .context("failed to run `where` command")?;
+    // 2. Search PATH directly instead of spawning `where.exe`. Launching
+    // console tools from a GUI app can flash an external console window.
+    find_on_path(name).with_context(|| format!("executable not found on PATH: {name}"))
+}
 
-    if !output.status.success() {
-        bail!("`where {}` failed", name);
+fn find_on_path(name: &str) -> Result<PathBuf> {
+    let candidate = PathBuf::from(name);
+    if candidate.is_absolute() || name.contains('\\') || name.contains('/') {
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+        bail!("path does not exist: {name}");
     }
 
-    let path_str = String::from_utf8_lossy(&output.stdout);
-    let first_line = path_str.lines().next().unwrap_or("").trim();
+    let path_exts = path_extensions(name);
+    let Some(paths) = env::var_os("PATH") else {
+        bail!("PATH is not set");
+    };
 
-    if first_line.is_empty() {
-        bail!("`where {}` returned empty path", name);
+    for dir in env::split_paths(&paths) {
+        for ext in &path_exts {
+            let candidate = dir.join(format!("{name}{ext}"));
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
     }
 
-    Ok(PathBuf::from(first_line))
+    bail!("not found on PATH: {name}");
+}
+
+fn path_extensions(name: &str) -> Vec<String> {
+    if PathBuf::from(name).extension().is_some() {
+        return vec![String::new()];
+    }
+
+    let raw = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let mut exts = vec![String::new()];
+    exts.extend(
+        raw.split(';')
+            .map(str::trim)
+            .filter(|ext| !ext.is_empty())
+            .map(|ext| {
+                if ext.starts_with('.') {
+                    ext.to_string()
+                } else {
+                    format!(".{ext}")
+                }
+            }),
+    );
+    exts
 }

@@ -17,12 +17,19 @@ import {
   getStoredAgentSessionId,
   rememberAgentSession,
 } from "../lib/agentSessions";
+import {
+  agentDisplayName,
+  getAgentCommandName,
+  parseAgentCommand,
+} from "../lib/agentCommand";
 
 interface TerminalViewParams {
   shellKind: ShellKind;
   cwd?: string;
   agentCommand?: string;
   agentSessionId?: string;
+  launchCommand?: string;
+  startupCommand?: string;
   resumeOnRestore?: boolean;
   /** Pre-set label (used by sidebar / status bar). */
   label?: string;
@@ -216,7 +223,7 @@ export default function TerminalView(
     term.attachCustomKeyEventHandler((e) => {
       const isAgentImagePaste =
         e.type === "keydown" &&
-        agentCommandRef.current === "claude" &&
+        getAgentCommandName(agentCommandRef.current) === "claude" &&
         e.altKey &&
         !e.ctrlKey &&
         !e.metaKey &&
@@ -357,10 +364,12 @@ export default function TerminalView(
       sinceMs: number,
     ): Promise<string | undefined> => {
       const agentSessionId = await queueAgentSessionLookup(async () => {
+        const agentName = getAgentCommandName(agentCmd);
+        if (!agentName) return null;
         const nextAgentSessionId = await invoke<string | null>(
           "find_latest_agent_session",
           {
-            agentCommand: agentCmd,
+            agentCommand: agentName,
             cwd: cwd ?? null,
             sinceMs,
             excludeIds: getExcludedAgentSessionIds(props.api.id),
@@ -449,6 +458,8 @@ export default function TerminalView(
       }
 
       const openPty = async () => {
+        const startupCommand =
+          startup.command ?? props.params?.startupCommand ?? null;
         const commandStartedAt = Date.now();
         unlisten = await listen<{
           type: string;
@@ -500,7 +511,8 @@ export default function TerminalView(
               cwd: cwd ?? null,
               rows: term.rows,
               cols: term.cols,
-              startupCommand: startup.command ?? null,
+              launchCommand: props.params?.launchCommand ?? null,
+              startupCommand,
             },
           });
         } catch (err) {
@@ -876,11 +888,12 @@ function isImageFile(file: File): boolean {
 }
 
 function isImagePasteAgent(cmd: string | undefined): boolean {
-  return cmd === "claude" || cmd === "codex" || cmd === "opencode";
+  const agentName = getAgentCommandName(cmd);
+  return agentName === "claude" || agentName === "codex" || agentName === "opencode";
 }
 
 function imagePasteSequence(cmd: string | undefined): number[] {
-  return cmd === "claude" ? ALT_V : CTRL_V;
+  return getAgentCommandName(cmd) === "claude" ? ALT_V : CTRL_V;
 }
 
 type AgentSessionLookup = (
@@ -913,12 +926,13 @@ async function resolveAgentStartupCommand(
   lookupAgentSession: AgentSessionLookup,
 ): Promise<AgentStartupResolution> {
   let resolvedAgentSessionId = agentSessionId;
+  const agentName = getAgentCommandName(cmd);
 
   if (
     resumeOnRestore &&
     !resolvedAgentSessionId &&
-    cmd !== "opencode" &&
-    cmd !== "codex" &&
+    agentName !== "opencode" &&
+    agentName !== "codex" &&
     cmd
   ) {
     try {
@@ -944,41 +958,48 @@ function getAgentStartupCommand(
   agentSessionId: string | undefined,
 ): string | undefined {
   if (!cmd) return undefined;
-  const executable = agentExecutable(cmd);
+  const parsed = parseAgentCommand(cmd);
+  if (!parsed) return undefined;
+  const executable = agentExecutable(parsed.name, parsed.token);
+  const invocation = [executable, parsed.args].filter(Boolean).join(" ");
 
   if (!resumeOnRestore) {
-    if (cmd === "claude" && agentSessionId) {
-      return `${executable} --session-id ${quoteArg(agentSessionId)}`;
+    if (parsed.name === "claude" && agentSessionId) {
+      return `${invocation} --session-id ${quoteArg(agentSessionId)}`;
     }
-    return executable;
+    return invocation;
   }
 
   if (agentSessionId) {
     return (
       {
-        claude: `${executable} --resume ${quoteArg(agentSessionId)}`,
-        codex: `${executable} resume ${quoteArg(agentSessionId)}`,
-        opencode: `${executable} -s ${quoteArg(agentSessionId)}`,
-      }[cmd] ?? `${executable} --resume ${quoteArg(agentSessionId)}`
+        claude: `${invocation} --resume ${quoteArg(agentSessionId)}`,
+        codex: `${invocation} resume ${quoteArg(agentSessionId)}`,
+        opencode: `${invocation} -s ${quoteArg(agentSessionId)}`,
+      }[parsed.name] ?? `${invocation} --resume ${quoteArg(agentSessionId)}`
     );
   }
 
-  if (cmd === "opencode" || cmd === "codex") return executable;
+  if (parsed.name === "opencode" || parsed.name === "codex") return invocation;
 
   return (
     {
-      claude: `${executable} --continue`,
-    }[cmd] ?? `${executable} --resume`
+      claude: `${invocation} --continue`,
+    }[parsed.name] ?? `${invocation} --resume`
   );
 }
 
-function agentExecutable(cmd: string): string {
+function agentExecutable(name: string, token: string): string {
   return (
     {
       codex: "codex.cmd",
       opencode: "opencode.cmd",
-    }[cmd] ?? cmd
+    }[name] ?? quoteExecutable(token)
   );
+}
+
+function quoteExecutable(value: string): string {
+  return /\s/.test(value) ? quoteArg(value) : value;
 }
 
 function quoteArg(value: string): string {
@@ -999,7 +1020,5 @@ function createPtyId(): string {
 }
 
 function agentLabel(cmd: string): string {
-  return (
-    { claude: "Claude Code", codex: "Codex", opencode: "OpenCode" }[cmd] ?? cmd
-  );
+  return agentDisplayName(cmd);
 }

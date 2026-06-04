@@ -3,7 +3,7 @@
 //! [`PtySession`] wraps a ConPTY child process with a blocking reader thread
 //! that forwards output chunks through a bounded mpsc channel.
 
-use crate::shell::resolve_command;
+use crate::shell::{resolve_command, resolve_launch_command};
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, Child, MasterPty, PtySize};
 use std::io::{Read, Write};
@@ -48,6 +48,7 @@ impl PtySession {
         cwd: Option<&str>,
         rows: u16,
         cols: u16,
+        launch_command: Option<&str>,
         startup_command: Option<&str>,
         tx: ChunkSender,
     ) -> Result<Self> {
@@ -57,7 +58,10 @@ impl PtySession {
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // Build the shell command.
-        let mut cmd = resolve_command(&shell_kind, startup_command)?;
+        let mut cmd = match launch_command {
+            Some(command) if !command.trim().is_empty() => resolve_launch_command(command)?,
+            _ => resolve_command(&shell_kind, startup_command)?,
+        };
 
         // Set working directory.
         if let Some(dir) = cwd {

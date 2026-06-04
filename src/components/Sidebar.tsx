@@ -11,10 +11,12 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useSessionStore, type SessionMeta } from "../stores/sessionStore";
+import { useSessionMenuStore } from "../stores/sessionMenuStore";
 import { useUIStore } from "../stores/uiStore";
 import { useModalStore } from "../stores/modalStore";
 import ContextMenu from "./ContextMenu";
 import { buildNewSessionItems } from "./newSessionMenu";
+import { getAgentCommandName } from "../lib/agentCommand";
 
 interface Props {
   api: DockviewApi | null;
@@ -22,10 +24,11 @@ interface Props {
 
 /** Map a session to the icon shown at the left of its row. */
 function sessionIcon(s: SessionMeta) {
-  if (s.agentCommand === "claude")
+  const agentName = getAgentCommandName(s.agentCommand);
+  if (agentName === "claude")
     return <ClaudeCode size={20} />;
-  if (s.agentCommand === "codex") return <Codex size={20} />;
-  if (s.agentCommand === "opencode") return <OpenCode size={20} />;
+  if (agentName === "codex") return <Codex size={20} />;
+  if (agentName === "opencode") return <OpenCode size={20} />;
   switch (s.shellKind) {
     case "cmd":
       return <SquareTerminal size={18} />;
@@ -47,6 +50,7 @@ function statusColor(status: SessionMeta["status"]) {
 export default function Sidebar({ api }: Props) {
   const sessions = useSessionStore((s) => s.sessions);
   const activeId = useSessionStore((s) => s.activeId);
+  const sessionMenuItems = useSessionMenuStore((s) => s.items);
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
   const openModal = useModalStore((s) => s.openModal);
   const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
@@ -55,7 +59,7 @@ export default function Sidebar({ api }: Props) {
     api?.getPanel(id)?.focus();
   };
 
-  const newSessionItems = buildNewSessionItems(api);
+  const newSessionItems = buildNewSessionItems(api, sessionMenuItems);
 
   /** Open new-session dropdown at the button position. */
   const openNewMenu = (e: React.MouseEvent<HTMLElement>) => {

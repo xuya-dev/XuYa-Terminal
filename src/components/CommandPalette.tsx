@@ -4,9 +4,9 @@ import { useThemeStore } from "../stores/themeStore";
 import { useUIStore } from "../stores/uiStore";
 import { useModalStore } from "../stores/modalStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useSessionMenuStore } from "../stores/sessionMenuStore";
 import { FAMILIES } from "../themes";
 import { openTerminal } from "../lib/panels";
-import type { ShellKind } from "../stores/sessionStore";
 
 interface CommandPaletteProps {
   api: DockviewApi | null;
@@ -36,37 +36,28 @@ export default function CommandPalette({ api }: CommandPaletteProps) {
   const zoomIn = useSettingsStore((s) => s.zoomIn);
   const zoomOut = useSettingsStore((s) => s.zoomOut);
   const resetZoom = useSettingsStore((s) => s.resetZoom);
+  const sessionMenuItems = useSessionMenuStore((s) => s.items);
 
-  const openShell = useCallback(
-    (shellKind: ShellKind, label: string) => {
-      if (!api) return;
-      openTerminal(api, { shellKind, label });
-    },
-    [api],
-  );
-
-  const openAgent = useCallback(
-    (command: string, label: string) => {
-      if (!api) return;
-      openTerminal(api, {
-        shellKind: "powerShell",
-        agentCommand: command,
-        label,
-      });
-    },
-    [api],
-  );
+  const sessionCommands: Command[] = sessionMenuItems
+    .filter((item) => item.visible)
+    .map((item) => ({
+      id: `session:${item.id}`,
+      label: `打开 ${item.label}`,
+      icon: item.kind === "agent" ? "◎" : "▸",
+      category: item.kind === "agent" ? "Coding" : "Shell",
+      action: () => {
+        if (!api) return;
+        openTerminal(api, {
+          shellKind: item.shellKind,
+          label: item.label,
+          agentCommand: item.kind === "agent" ? item.agentCommand : undefined,
+          launchCommand: item.kind === "shell" ? item.startupCommand : undefined,
+        });
+      },
+    }));
 
   const commands: Command[] = [
-    // Shell commands
-    { id: "shell:ps", label: "打开 PowerShell", icon: "⬡", category: "Shell", action: () => openShell("powerShell", "PowerShell") },
-    { id: "shell:cmd", label: "打开 CMD", icon: "▸", category: "Shell", action: () => openShell("cmd", "CMD") },
-    { id: "shell:wsl", label: "打开 WSL", icon: "🐧", category: "Shell", action: () => openShell("wsl", "WSL") },
-    { id: "shell:gitbash", label: "打开 Git Bash", icon: "󰊢", category: "Shell", action: () => openShell("gitBash", "Git Bash") },
-    // Agent commands
-    { id: "agent:claude", label: "启动 Claude Code", icon: "🤖", category: "Agent", action: () => openAgent("claude", "Claude Code") },
-    { id: "agent:codex", label: "启动 Codex", icon: "⚡", category: "Agent", action: () => openAgent("codex", "Codex") },
-    { id: "agent:opencode", label: "启动 OpenCode", icon: "🔓", category: "Agent", action: () => openAgent("opencode", "OpenCode") },
+    ...sessionCommands,
     // Mode toggle
     { id: "mode:toggle", label: "切换深色 / 浅色模式", icon: "◐", category: "外观", action: toggleMode },
     // Family selection

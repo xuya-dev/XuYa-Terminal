@@ -29,6 +29,8 @@ pub struct SessionSpec {
     pub rows: u16,
     /// Initial terminal columns.
     pub cols: u16,
+    /// Optional full command line to launch instead of the selected shell.
+    pub launch_command: Option<String>,
     /// Optional command to run after the shell has started.
     pub startup_command: Option<String>,
 }

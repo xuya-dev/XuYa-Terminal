@@ -13,6 +13,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { clearTerminal } from "./TerminalView";
 import { openTerminal } from "../lib/panels";
 import { useModalStore } from "../stores/modalStore";
+import { useSessionMenuStore } from "../stores/sessionMenuStore";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
 import { buildNewSessionItems } from "./newSessionMenu";
 
@@ -137,10 +138,11 @@ function useRightActionMode() {
 export function RightHeaderActions(props: IDockviewHeaderActionsProps) {
   const { containerApi, group } = props;
   const openModal = useModalStore((s) => s.openModal);
+  const sessionMenuItems = useSessionMenuStore((s) => s.items);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
   const { ref: actionsRef, mode } = useRightActionMode();
-  const newSessionItems = buildNewSessionItems(containerApi, {
+  const newSessionItems = buildNewSessionItems(containerApi, sessionMenuItems, {
     referenceGroup: group.id,
     direction: "within",
   });
