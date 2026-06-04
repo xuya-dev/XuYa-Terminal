@@ -23,7 +23,7 @@ import {
 import { useThemeStore, applyThemeToDOM } from "../stores/themeStore";
 import { FAMILIES } from "../themes";
 import type { ShellKind } from "../stores/sessionStore";
-import type { ThemeFamily } from "../themes";
+import type { SettingsTab } from "../stores/modalStore";
 
 const SHELL_OPTIONS: { value: ShellKind; label: string }[] = [
   { value: "powerShell", label: "PowerShell" },
@@ -53,8 +53,6 @@ interface UpdateInfo {
   date?: string;
   body?: string;
 }
-
-type SettingsTab = "appearance" | "terminal" | "sessions";
 
 const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
   { value: "appearance", label: "外观" },
@@ -149,86 +147,14 @@ function Segmented<T extends string>({
 }
 
 /* ──────────────────────────────────────────── */
-/*  Theme modal with live preview              */
-/* ──────────────────────────────────────────── */
-
-function ThemeModal() {
-  const closeModal = useModalStore((s) => s.closeModal);
-  const { family, mode, setFamily, setMode, palette } = useThemeStore();
-
-  /** Re-apply the committed theme when the modal closes / unmounts. */
-  const reapplyCommitted = useCallback(() => {
-    applyThemeToDOM(palette, mode);
-  }, [palette, mode]);
-
-  useEffect(() => () => reapplyCommitted(), [reapplyCommitted]);
-
-  const handlePreview = (f: ThemeFamily) => {
-    applyThemeToDOM(f[mode], mode);
-  };
-
-  const handleLeave = () => {
-    applyThemeToDOM(palette, mode);
-  };
-
-  const handleSelect = (id: string) => {
-    setFamily(id);
-  };
-
-  return (
-    <ModalShell title="主题与外观" onClose={closeModal}>
-      <section className="xy-set-section">
-        <Row label="显示模式">
-          <Segmented
-            value={mode}
-            options={[
-              { value: "light", label: "浅色" },
-              { value: "dark", label: "深色" },
-            ]}
-            onChange={setMode}
-          />
-        </Row>
-      </section>
-
-      <section className="xy-set-section">
-        <h3 className="xy-set-section-title">主题风格</h3>
-        <p className="xy-set-section-hint">悬停卡片实时预览，点击应用</p>
-        <div className="xy-family-grid">
-          {FAMILIES.map((f) => {
-            const isActive = f.id === family.id;
-            const p = f[mode];
-            return (
-              <button
-                key={f.id}
-                className={`xy-family-card ${isActive ? "is-active" : ""}`}
-                onMouseEnter={() => handlePreview(f)}
-                onMouseLeave={handleLeave}
-                onClick={() => handleSelect(f.id)}
-              >
-                <span className="xy-family-card-name">{f.name.split(" / ")[0]}</span>
-                <div className="xy-family-card-colors">
-                  <span className="xy-family-dot" style={{ background: p.chrome.accent }} />
-                  <span className="xy-family-dot" style={{ background: p.chrome.success }} />
-                  <span className="xy-family-dot" style={{ background: p.chrome.warning }} />
-                  <span className="xy-family-dot" style={{ background: p.chrome.danger }} />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-    </ModalShell>
-  );
-}
-
-/* ──────────────────────────────────────────── */
 /*  Settings modal (trimmed)                   */
 /* ──────────────────────────────────────────── */
 
 function SettingsModal() {
   const closeModal = useModalStore((s) => s.closeModal);
-  const openModal = useModalStore((s) => s.openModal);
-  const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
+  const activeTab = useModalStore((s) => s.settingsTab);
+  const setActiveTab = useModalStore((s) => s.setSettingsTab);
+  const { family, mode, setFamily, setMode, palette } = useThemeStore();
   const {
     zoom,
     defaultShell,
@@ -241,6 +167,12 @@ function SettingsModal() {
     setCursorStyle,
     setCursorBlink,
   } = useSettingsStore();
+
+  const reapplyCommitted = useCallback(() => {
+    applyThemeToDOM(palette, mode);
+  }, [palette, mode]);
+
+  useEffect(() => () => reapplyCommitted(), [reapplyCommitted]);
 
   return (
     <ModalShell title="设置" onClose={closeModal}>
@@ -266,13 +198,15 @@ function SettingsModal() {
           <section className="xy-set-section">
             <h3 className="xy-set-section-title">外观</h3>
 
-            <Row label="主题与外观" hint="配色家族、浅色/深色切换">
-              <button
-                className="xy-set-link-btn"
-                onClick={() => openModal("theme")}
-              >
-                打开主题设置 →
-              </button>
+            <Row label="显示模式">
+              <Segmented
+                value={mode}
+                options={[
+                  { value: "light", label: "浅色" },
+                  { value: "dark", label: "深色" },
+                ]}
+                onChange={setMode}
+              />
             </Row>
 
             <Row
@@ -297,6 +231,54 @@ function SettingsModal() {
                 </button>
               </div>
             </Row>
+
+            <div className="xy-inline-theme-block">
+              <div className="xy-set-section-head">
+                <div>
+                  <h3 className="xy-set-section-title">主题风格</h3>
+                  <p className="xy-set-section-hint">
+                    悬停卡片实时预览，点击应用
+                  </p>
+                </div>
+              </div>
+              <div className="xy-family-grid xy-family-grid--settings">
+                {FAMILIES.map((f) => {
+                  const isActive = f.id === family.id;
+                  const p = f[mode];
+                  return (
+                    <button
+                      key={f.id}
+                      className={`xy-family-card ${isActive ? "is-active" : ""}`}
+                      onMouseEnter={() => applyThemeToDOM(f[mode], mode)}
+                      onMouseLeave={reapplyCommitted}
+                      onClick={() => setFamily(f.id)}
+                    >
+                      <span className="xy-family-card-name">
+                        {f.name.split(" / ")[0]}
+                      </span>
+                      <div className="xy-family-card-colors">
+                        <span
+                          className="xy-family-dot"
+                          style={{ background: p.chrome.accent }}
+                        />
+                        <span
+                          className="xy-family-dot"
+                          style={{ background: p.chrome.success }}
+                        />
+                        <span
+                          className="xy-family-dot"
+                          style={{ background: p.chrome.warning }}
+                        />
+                        <span
+                          className="xy-family-dot"
+                          style={{ background: p.chrome.danger }}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </section>
         )}
 
@@ -357,6 +339,11 @@ function AutoUpdatePanel() {
     ) : (
       <RefreshCw size={15} strokeWidth={1.8} />
     );
+  const releaseLabel = updateInfo
+    ? `版本 ${updateInfo.version}`
+    : status === "none"
+      ? "已是最新"
+      : "等待检查";
 
   const handleCheck = async () => {
     setStatus("checking");
@@ -435,20 +422,20 @@ function AutoUpdatePanel() {
 
   return (
     <section className="xy-about-section">
-      <h3 className="xy-set-section-title">自动更新</h3>
-
       <div className="xy-update-card xy-update-card--about" data-status={status}>
-        <div className="xy-update-status">
+        <div className="xy-update-main">
           <span className="xy-update-status-icon">{statusIcon}</span>
+
           <div className="xy-update-copy">
-            <span className="xy-update-title">自动更新</span>
+            <div className="xy-update-title-row">
+              <span className="xy-update-title">自动更新</span>
+              <span className="xy-update-badge">{releaseLabel}</span>
+            </div>
             <span className="xy-update-message">{message}</span>
-            {updateInfo && (
-              <span className="xy-update-meta">
-                {updateInfo.date ? `${updateInfo.date} · ` : ""}
-                版本 {updateInfo.version}
-              </span>
-            )}
+            <span className="xy-update-meta">
+              更新源 GitHub Releases
+              {updateInfo?.date ? ` · ${updateInfo.date}` : ""}
+            </span>
           </div>
         </div>
 
@@ -464,7 +451,7 @@ function AutoUpdatePanel() {
 
         <div className="xy-update-actions">
           <button
-            className="xy-mini-btn"
+            className="xy-update-btn xy-update-btn--ghost"
             type="button"
             disabled={busy}
             onClick={handleCheck}
@@ -473,7 +460,7 @@ function AutoUpdatePanel() {
             检查更新
           </button>
           <button
-            className="xy-mini-btn xy-mini-btn--accent"
+            className="xy-update-btn xy-update-btn--primary"
             type="button"
             disabled={status !== "available"}
             onClick={handleInstall}
@@ -723,10 +710,15 @@ function AboutModal() {
           <div className="xy-about-glyph">
             <img src="/logo.png" alt="XuYa Terminal" width="48" height="48" />
           </div>
-          <div className="xy-about-name">XuYa Terminal</div>
-          <div className="xy-about-tag">面向 AI Agent 工程师的终端管理器</div>
-          <div className="xy-about-version">版本 0.1.1 · Tauri v2 · React 19</div>
-          <div className="xy-about-hint">按 Ctrl+Shift+P 打开命令面板</div>
+          <div className="xy-about-copy">
+            <div className="xy-about-name">XuYa Terminal</div>
+            <div className="xy-about-tag">面向 AI Agent 工程师的终端管理器</div>
+          </div>
+          <div className="xy-about-meta">
+            <span>版本 0.1.1</span>
+            <span>Tauri v2</span>
+            <span>React 19</span>
+          </div>
         </div>
 
         <AutoUpdatePanel />
@@ -740,6 +732,5 @@ export default function Modals() {
   const modal = useModalStore((s) => s.modal);
   if (modal === "settings") return <SettingsModal />;
   if (modal === "about") return <AboutModal />;
-  if (modal === "theme") return <ThemeModal />;
   return null;
 }

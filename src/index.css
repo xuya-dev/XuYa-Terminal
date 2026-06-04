@@ -1690,6 +1690,10 @@ body,
   min-height: 310px;
 }
 
+.xy-inline-theme-block {
+  padding-top: 12px;
+}
+
 .xy-set-section {
   margin-top: 14px;
 }
@@ -1877,13 +1881,20 @@ body,
 }
 
 .xy-update-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: var(--xy-surface-sunken);
-  border: 1px solid var(--xy-border-soft);
-  border-radius: var(--xy-radius-sm);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--xy-surface-panel) 92%, var(--xy-accent-soft) 8%),
+      var(--xy-surface-sunken)
+    );
+  border: 1px solid color-mix(in srgb, var(--xy-border) 82%, var(--xy-accent) 18%);
+  border-radius: var(--xy-radius-md);
+  box-shadow: 0 1px 0 color-mix(in srgb, white 7%, transparent) inset;
 }
 
 .xy-update-card--about {
@@ -1898,10 +1909,10 @@ body,
   border-color: color-mix(in srgb, var(--xy-danger) 52%, var(--xy-border) 48%);
 }
 
-.xy-update-status {
+.xy-update-main {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -1909,11 +1920,12 @@ body,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 38px;
+  height: 38px;
   flex-shrink: 0;
   border-radius: var(--xy-radius-sm);
-  background: color-mix(in srgb, var(--xy-surface) 86%, var(--xy-accent-soft) 14%);
+  background: var(--xy-surface);
+  border: 1px solid var(--xy-border-soft);
   color: var(--xy-accent);
 }
 
@@ -1929,19 +1941,41 @@ body,
 .xy-update-copy {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.xy-update-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
 .xy-update-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--xy-fg);
+}
+
+.xy-update-badge {
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--xy-accent-soft) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--xy-accent) 26%, transparent);
+  border-radius: 999px;
+  color: var(--xy-accent-soft-fg);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .xy-update-message,
 .xy-update-meta {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--xy-fg-faint);
 }
 
@@ -1959,6 +1993,7 @@ body,
 }
 
 .xy-update-progress {
+  grid-column: 1 / -1;
   height: 6px;
   overflow: hidden;
   background: var(--xy-surface);
@@ -1975,9 +2010,57 @@ body,
 
 .xy-update-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.xy-update-btn {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: var(--xy-radius-sm);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
+}
+
+.xy-update-btn--ghost {
+  background: var(--xy-surface);
+  border: 1px solid var(--xy-border);
+  color: var(--xy-fg);
+}
+
+.xy-update-btn--ghost:hover {
+  background: var(--xy-surface-hover);
+  border-color: color-mix(in srgb, var(--xy-border) 68%, var(--xy-accent) 32%);
+}
+
+.xy-update-btn--primary {
+  background: var(--xy-accent);
+  border: 1px solid var(--xy-accent);
+  color: #ffffff;
+}
+
+.xy-update-btn--primary:hover {
+  background: var(--xy-accent-hover);
+  border-color: var(--xy-accent-hover);
+}
+
+.xy-update-btn:disabled,
+.xy-update-btn:disabled:hover {
+  cursor: not-allowed;
+  opacity: 0.45;
+  background: var(--xy-surface);
+  border-color: var(--xy-border);
+  color: var(--xy-fg-faint);
 }
 
 .xy-spin {
@@ -2110,6 +2193,18 @@ body,
     grid-template-columns: 1fr;
   }
 
+  .xy-update-card {
+    grid-template-columns: 1fr;
+  }
+
+  .xy-update-actions {
+    justify-content: stretch;
+  }
+
+  .xy-update-btn {
+    flex: 1 1 auto;
+  }
+
   .xy-set-section-head,
   .xy-session-menu-card {
     flex-direction: column;
@@ -2190,26 +2285,33 @@ body,
 .xy-about-layout {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
 .xy-about {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: center;
-  text-align: center;
-  padding: 16px 0 4px;
-  gap: 6px;
+  gap: 14px;
+  padding: 14px 0 2px;
+  text-align: left;
 }
 
 .xy-about-section {
-  padding-top: 14px;
-  border-top: 1px solid var(--xy-border-soft);
+  padding-top: 4px;
 }
 
 .xy-about-glyph {
-  margin-bottom: 6px;
   filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.2));
+}
+
+.xy-about-glyph img {
+  display: block;
+  border-radius: var(--xy-radius-sm);
+}
+
+.xy-about-copy {
+  min-width: 0;
 }
 
 .xy-about-name {
@@ -2224,16 +2326,34 @@ body,
   color: var(--xy-fg-muted);
 }
 
-.xy-about-version {
-  font-size: 12px;
+.xy-about-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 220px;
+  font-size: 11px;
   color: var(--xy-fg-faint);
-  margin-top: 4px;
 }
 
-.xy-about-hint {
-  font-size: 11.5px;
-  color: var(--xy-fg-faint);
-  margin-top: 8px;
+.xy-about-meta span {
+  padding: 3px 7px;
+  background: var(--xy-surface-sunken);
+  border: 1px solid var(--xy-border-soft);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .xy-about {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .xy-about-meta {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    max-width: none;
+  }
 }
 
 /* ── Context menu ───────────────────────────────────────────────────────── */
@@ -2504,12 +2624,16 @@ body,
   gap: 8px;
 }
 
+.xy-family-grid--settings {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
 .xy-family-card {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  padding: 14px;
+  padding: 12px;
   background: var(--xy-surface-sunken);
   border: 1px solid var(--xy-border);
   border-radius: var(--xy-radius-md);

@@ -173,7 +173,7 @@ export default function Sidebar({ api }: Props) {
         <button
           className="xy-sidebar-foot-btn"
           title="主题"
-          onClick={() => openModal("theme")}
+          onClick={() => openModal("settings", "appearance")}
         >
           <Palette size={14} strokeWidth={1.6} />
           <span>主题</span>
