@@ -138,6 +138,7 @@ pub struct AgentCustomProviderSummary {
     name: String,
     base_url: String,
     endpoint: String,
+    api_key: Option<String>,
     model: Option<String>,
     haiku_model: Option<String>,
     sonnet_model: Option<String>,
@@ -159,6 +160,7 @@ pub struct AgentToolConfigState {
     sonnet_model: Option<String>,
     opus_model: Option<String>,
     extra_config: Option<String>,
+    api_key: Option<String>,
     token_configured: bool,
     custom_providers: Vec<AgentCustomProviderSummary>,
 }
@@ -1162,6 +1164,7 @@ fn summarize_custom_provider(
         name: provider.name.clone(),
         base_url,
         endpoint,
+        api_key: clean_optional_text(Some(provider.api_key.as_str())),
         model: provider.model.clone(),
         haiku_model: provider.haiku_model.clone(),
         sonnet_model: provider.sonnet_model.clone(),
@@ -1645,12 +1648,8 @@ fn read_claude_config_state(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let token_configured = env.is_some_and(|env| {
-        env.get("ANTHROPIC_AUTH_TOKEN")
-            .or_else(|| env.get("ANTHROPIC_API_KEY"))
-            .and_then(Value::as_str)
-            .is_some_and(|value| is_real_token(value, CLAUDE_TOKEN_PLACEHOLDER))
-    });
+    let api_key = settings.as_ref().and_then(extract_claude_api_key);
+    let token_configured = api_key.is_some();
     let active_provider = if let Some(base_url) = base_url.as_deref() {
         Some(
             known_claude_provider_id(base_url)
@@ -1681,6 +1680,7 @@ fn read_claude_config_state(
         sonnet_model,
         opus_model,
         extra_config,
+        api_key,
         token_configured,
         custom_providers: custom_provider_summaries("claude", custom_providers),
     }
@@ -1697,14 +1697,22 @@ fn read_codex_config_state(
     let base_url = active_config_provider
         .as_deref()
         .and_then(|provider| extract_codex_provider_string(&text, provider, "base_url"));
-    let token_configured = active_config_provider
+    let api_key = active_config_provider
         .as_deref()
         .and_then(|provider| {
-            extract_codex_provider_string(&text, provider, "experimental_bearer_token")
+            clean_codex_token(extract_codex_provider_string(
+                &text,
+                provider,
+                "experimental_bearer_token",
+            ))
         })
-        .or_else(|| extract_top_level_toml_string(&text, "experimental_bearer_token"))
-        .as_deref()
-        .is_some_and(|value| is_real_token(value, CODEX_TOKEN_PLACEHOLDER));
+        .or_else(|| {
+            clean_codex_token(extract_top_level_toml_string(
+                &text,
+                "experimental_bearer_token",
+            ))
+        });
+    let token_configured = api_key.is_some();
     let endpoint = base_url.as_deref().map(codex_responses_endpoint);
     let active_provider = active_config_provider.as_deref().map(|provider| {
         if provider == "openai" {
@@ -1733,6 +1741,7 @@ fn read_codex_config_state(
         sonnet_model: None,
         opus_model: None,
         extra_config,
+        api_key,
         token_configured,
         custom_providers: custom_provider_summaries("codex", custom_providers),
     }

@@ -121,6 +121,7 @@ interface AgentCustomProviderSummary {
   name: string;
   baseUrl: string;
   endpoint: string;
+  apiKey?: string | null;
   model?: string | null;
   haikuModel?: string | null;
   sonnetModel?: string | null;
@@ -140,6 +141,7 @@ interface AgentToolConfigState {
   sonnetModel?: string | null;
   opusModel?: string | null;
   extraConfig?: string | null;
+  apiKey?: string | null;
   tokenConfigured: boolean;
   customProviders: AgentCustomProviderSummary[];
 }
@@ -851,7 +853,7 @@ function draftFromConfigState(
         ? inferCodexCustomName(config.extraConfig)
         : current.customName),
     baseUrl: customProvider?.baseUrl ?? config.baseUrl ?? provider.baseUrl,
-    apiKey: "",
+    apiKey: customProvider?.apiKey ?? config.apiKey ?? "",
     model:
       customProvider?.model ??
       config.model ??
@@ -1215,7 +1217,7 @@ function AgentConfigSettings() {
         providerId: customProviderSelector(saved.id),
         customName: saved.name,
         baseUrl: saved.baseUrl,
-        apiKey: "",
+        apiKey: saved.apiKey ?? "",
         model: saved.model ?? defaultCustomModel(tool),
         haikuModel: saved.haikuModel ?? "",
         sonnetModel: saved.sonnetModel ?? "",
@@ -1290,7 +1292,7 @@ function AgentConfigSettings() {
           providerId: customProviderSelector(saved.id),
           customName: saved.name,
           baseUrl: saved.baseUrl,
-          apiKey: "",
+          apiKey: saved.apiKey ?? "",
           model: saved.model ?? defaultCustomModel(tool),
           haikuModel: saved.haikuModel ?? "",
           sonnetModel: saved.sonnetModel ?? "",
@@ -1341,11 +1343,6 @@ function AgentConfigSettings() {
         },
       );
       await loadState();
-      if (tool === "claude") {
-        setClaudeDraft((current) => ({ ...current, apiKey: "" }));
-      } else {
-        setCodexDraft((current) => ({ ...current, apiKey: "" }));
-      }
       const label =
         nextDraft.customName.trim() && isCustomProviderId(nextDraft.providerId)
           ? nextDraft.customName.trim()
@@ -1605,7 +1602,7 @@ function AgentConfigCard({
       providerId: customProviderSelector(provider.id),
       customName: provider.name,
       baseUrl: provider.baseUrl,
-      apiKey: "",
+      apiKey: provider.apiKey ?? "",
       model: provider.model ?? defaultCustomModel(tool),
       haikuModel: provider.haikuModel ?? "",
       sonnetModel: provider.sonnetModel ?? "",
@@ -1617,7 +1614,7 @@ function AgentConfigCard({
           providerId: customProviderSelector(provider.id),
           customName: provider.name,
           baseUrl: provider.baseUrl,
-          apiKey: "",
+          apiKey: provider.apiKey ?? "",
           model: provider.model ?? defaultCustomModel(tool),
           haikuModel: provider.haikuModel ?? "",
           sonnetModel: provider.sonnetModel ?? "",
