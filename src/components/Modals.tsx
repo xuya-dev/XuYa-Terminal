@@ -1,6 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { useEffect, useCallback, useState, type ReactNode } from "react";
+import { useEffect, useCallback, useRef, useState, type ReactNode } from "react";
 import {
   AlertCircle,
   ArrowDown,
@@ -155,6 +155,7 @@ function SettingsModal() {
   const activeTab = useModalStore((s) => s.settingsTab);
   const setActiveTab = useModalStore((s) => s.setSettingsTab);
   const { family, mode, setFamily, setMode, palette } = useThemeStore();
+  const committedThemeRef = useRef({ palette, mode });
   const {
     zoom,
     defaultShell,
@@ -168,9 +169,14 @@ function SettingsModal() {
     setCursorBlink,
   } = useSettingsStore();
 
-  const reapplyCommitted = useCallback(() => {
-    applyThemeToDOM(palette, mode);
+  useEffect(() => {
+    committedThemeRef.current = { palette, mode };
   }, [palette, mode]);
+
+  const reapplyCommitted = useCallback(() => {
+    const theme = committedThemeRef.current;
+    applyThemeToDOM(theme.palette, theme.mode);
+  }, []);
 
   useEffect(() => () => reapplyCommitted(), [reapplyCommitted]);
 
@@ -245,13 +251,20 @@ function SettingsModal() {
                 {FAMILIES.map((f) => {
                   const isActive = f.id === family.id;
                   const p = f[mode];
+                  const applyFamily = () => {
+                    committedThemeRef.current = {
+                      palette: f[mode],
+                      mode,
+                    };
+                    setFamily(f.id);
+                  };
                   return (
                     <button
                       key={f.id}
                       className={`xy-family-card ${isActive ? "is-active" : ""}`}
                       onMouseEnter={() => applyThemeToDOM(f[mode], mode)}
                       onMouseLeave={reapplyCommitted}
-                      onClick={() => setFamily(f.id)}
+                      onClick={applyFamily}
                     >
                       <span className="xy-family-card-name">
                         {f.name.split(" / ")[0]}
