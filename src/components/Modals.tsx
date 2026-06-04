@@ -32,6 +32,7 @@ import {
   EyeOff,
   ExternalLink,
   Github,
+  Gauge,
   KeyRound,
   Loader2,
   Plus,
@@ -93,6 +94,7 @@ const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
 ];
 
 type AgentTool = "claude" | "codex";
+type AgentQuotaProviderType = "" | "newapi" | "sub2api";
 
 interface AgentProviderOption {
   id: string;
@@ -125,6 +127,11 @@ interface AgentDraft {
   opusModelName: string;
   extraConfig: string;
   authConfig: string;
+  quotaProviderType: AgentQuotaProviderType;
+  quotaBaseUrl: string;
+  quotaApiKey: string;
+  quotaAccessToken: string;
+  quotaUserId: string;
 }
 
 interface AgentCustomProviderSummary {
@@ -141,6 +148,11 @@ interface AgentCustomProviderSummary {
   opusModel?: string | null;
   opusModelName?: string | null;
   extraConfig?: string | null;
+  quotaProviderType?: AgentQuotaProviderType | null;
+  quotaBaseUrl?: string | null;
+  quotaApiKey?: string | null;
+  quotaAccessToken?: string | null;
+  quotaUserId?: string | null;
   tokenConfigured: boolean;
 }
 
@@ -224,7 +236,6 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     id: "zhipu",
     label: "ZhiPu GLM",
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
-    model: "glm-5.1",
     haikuModel: "glm-5.1",
     sonnetModel: "glm-5.1",
     opusModel: "glm-5.1",
@@ -235,7 +246,6 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     id: "minimax",
     label: "MiniMax",
     baseUrl: "https://api.minimaxi.com/anthropic",
-    model: "MiniMax-M2.7",
     haikuModel: "MiniMax-M2.7",
     sonnetModel: "MiniMax-M2.7",
     opusModel: "MiniMax-M2.7",
@@ -245,8 +255,7 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
   {
     id: "kimi",
     label: "Kimi",
-    baseUrl: "https://api.moonshot.cn/anthropic",
-    model: "kimi-k2.6",
+    baseUrl: "https://api.kimi.com/coding",
     haikuModel: "kimi-k2.6",
     sonnetModel: "kimi-k2.6",
     opusModel: "kimi-k2.6",
@@ -257,7 +266,6 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
     id: "deepseek",
     label: "DeepSeek",
     baseUrl: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-pro",
     haikuModel: "deepseek-v4-flash",
     sonnetModel: "deepseek-v4-pro",
     opusModel: "deepseek-v4-pro",
@@ -267,8 +275,7 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
   {
     id: "xiaomimimo",
     label: "XiaoMi Mimo",
-    baseUrl: "https://api.xiaomimimo.com/anthropic",
-    model: "mimo-v2.5-pro",
+    baseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic",
     haikuModel: "mimo-v2.5-pro",
     sonnetModel: "mimo-v2.5-pro",
     opusModel: "mimo-v2.5-pro",
@@ -305,10 +312,24 @@ const CODEX_PROVIDER_OPTIONS: AgentProviderOption[] = [
   },
 ];
 
+const CLAUDE_LEGACY_BUILTIN_FALLBACK_MODELS: Record<string, string> = {
+  zhipu: "glm-5.1",
+  minimax: "MiniMax-M2.7",
+  kimi: "kimi-k2.6",
+  deepseek: "deepseek-v4-pro",
+  xiaomimimo: "mimo-v2.5-pro",
+};
+
 const AGENT_DRAFT_KEYS: Record<AgentTool, string> = {
   claude: "xuya-agent-config-claude",
   codex: "xuya-agent-config-codex",
 };
+
+const QUOTA_PROVIDER_OPTIONS: { value: AgentQuotaProviderType; label: string }[] = [
+  { value: "", label: "不查询" },
+  { value: "sub2api", label: "Sub2API" },
+  { value: "newapi", label: "New API" },
+];
 
 /** Shared centered-modal shell with overlay + Esc-to-close. */
 function ModalShell({
@@ -855,6 +876,26 @@ function stringField(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;
 }
 
+function builtInFallbackModel(
+  tool: AgentTool,
+  provider: AgentProviderOption,
+  saved?: Pick<AgentBuiltInProviderSummary, "model">,
+) {
+  const model = stringField(saved?.model, provider.model ?? "");
+  if (
+    tool === "claude" &&
+    model &&
+    model === CLAUDE_LEGACY_BUILTIN_FALLBACK_MODELS[provider.id]
+  ) {
+    return "";
+  }
+  return model;
+}
+
+function quotaProviderTypeField(value: unknown): AgentQuotaProviderType {
+  return value === "newapi" || value === "sub2api" ? value : "";
+}
+
 function builtInProviderDraft(
   tool: AgentTool,
   provider: AgentProviderOption,
@@ -867,7 +908,7 @@ function builtInProviderDraft(
     customName: "",
     baseUrl: stringField(saved?.baseUrl, provider.baseUrl),
     apiKey: stringField(saved?.apiKey, ""),
-    model: stringField(saved?.model, provider.model ?? current.model),
+    model: builtInFallbackModel(tool, provider, saved),
     haikuModel: stringField(
       saved?.haikuModel,
       roleModelFallback(provider, "haiku"),
@@ -894,6 +935,11 @@ function builtInProviderDraft(
     ),
     extraConfig: stringField(saved?.extraConfig, ""),
     authConfig: tool === "codex" ? stringField(saved?.authConfig, "") : "",
+    quotaProviderType: "",
+    quotaBaseUrl: "",
+    quotaApiKey: "",
+    quotaAccessToken: "",
+    quotaUserId: "",
   };
   return {
     ...next,
@@ -911,7 +957,7 @@ function builtInProviderDraft(
 
 function defaultAgentDraft(tool: AgentTool): AgentDraft {
   const provider = providerOptionsFor(tool)[0];
-  const draft = {
+  const draft: AgentDraft = {
     providerId: provider.id,
     customName: "",
     baseUrl: provider.baseUrl,
@@ -925,6 +971,11 @@ function defaultAgentDraft(tool: AgentTool): AgentDraft {
     opusModelName: roleModelNameFallback(provider, "opus"),
     extraConfig: "",
     authConfig: "",
+    quotaProviderType: "",
+    quotaBaseUrl: "",
+    quotaApiKey: "",
+    quotaAccessToken: "",
+    quotaUserId: "",
   };
   return {
     ...draft,
@@ -1002,6 +1053,12 @@ function loadAgentDraft(tool: AgentTool): AgentDraft {
         (typeof parsed.authConfig === "string"
           ? sanitizeCodexAuthConfigForStorage(parsed.authConfig)
           : ""),
+      quotaProviderType: quotaProviderTypeField(parsed.quotaProviderType),
+      quotaBaseUrl: "",
+      quotaApiKey: "",
+      quotaAccessToken: "",
+      quotaUserId:
+        typeof parsed.quotaUserId === "string" ? parsed.quotaUserId : "",
     };
     return {
       ...draft,
@@ -1039,6 +1096,8 @@ function persistAgentDraft(tool: AgentTool, draft: AgentDraft) {
         tool === "codex"
           ? sanitizeCodexAuthConfigForStorage(draft.authConfig)
           : "",
+      quotaProviderType: draft.quotaProviderType,
+      quotaUserId: draft.quotaUserId,
     }),
   );
 }
@@ -1143,12 +1202,21 @@ function draftFromConfigState(
     providerId,
     config.builtInProviders,
   );
+  const configModel =
+    typeof config.model === "string" &&
+    !isCustomProviderId(providerId) &&
+    tool === "claude"
+      ? builtInFallbackModel(tool, provider, { model: config.model })
+      : config.model;
+  const savedBuiltInModel = !isCustomProviderId(providerId)
+    ? builtInFallbackModel(tool, provider, builtInProvider)
+    : undefined;
   const model =
     customProvider?.model ??
-    config.model ??
-    builtInProvider?.model ??
+    configModel ??
+    savedBuiltInModel ??
     provider.model ??
-    current.model;
+    (isCustomProviderId(providerId) ? current.model : "");
   const haikuModel =
     tool === "claude"
       ? customProvider?.haikuModel ??
@@ -1233,6 +1301,17 @@ function draftFromConfigState(
             current.authConfig,
           )
         : "",
+    quotaProviderType: isCustomProviderId(providerId)
+      ? quotaProviderTypeField(customProvider?.quotaProviderType)
+      : "",
+    quotaBaseUrl: "",
+    quotaApiKey: "",
+    quotaAccessToken: isCustomProviderId(providerId)
+      ? customProvider?.quotaAccessToken ?? ""
+      : "",
+    quotaUserId: isCustomProviderId(providerId)
+      ? customProvider?.quotaUserId ?? current.quotaUserId
+      : "",
   };
 
   const extraConfig = next.extraConfig.trim()
@@ -1581,6 +1660,11 @@ function AgentConfigSettings() {
             opusModelName: draftToSave.opusModelName,
             extraConfig: draftToSave.extraConfig,
             authConfig: draftToSave.authConfig,
+            quotaProviderType: draftToSave.quotaProviderType || null,
+            quotaBaseUrl: "",
+            quotaApiKey: "",
+            quotaAccessToken: draftToSave.quotaAccessToken,
+            quotaUserId: draftToSave.quotaUserId,
           },
         },
       );
@@ -1623,6 +1707,11 @@ function AgentConfigSettings() {
                 draftToSave.authConfig,
               )
             : "",
+        quotaProviderType: quotaProviderTypeField(saved.quotaProviderType),
+        quotaBaseUrl: "",
+        quotaApiKey: "",
+        quotaAccessToken: saved.quotaAccessToken ?? "",
+        quotaUserId: saved.quotaUserId ?? "",
       });
       await loadState();
       if (!options.silent) {
@@ -1802,6 +1891,11 @@ function AgentConfigSettings() {
                   nextDraft.authConfig,
                 )
               : "",
+          quotaProviderType: quotaProviderTypeField(saved.quotaProviderType),
+          quotaBaseUrl: "",
+          quotaApiKey: "",
+          quotaAccessToken: saved.quotaAccessToken ?? "",
+          quotaUserId: saved.quotaUserId ?? "",
         };
         provider = findProvider(tool, nextDraft.providerId);
       }
@@ -2124,8 +2218,17 @@ function AgentConfigCard({
   ) => {
     const syncFullConfig = options.syncFullConfig ?? true;
     const next = { ...draft, ...patch };
+    const configPassthroughKeys = new Set([
+      "extraConfig",
+      "authConfig",
+      "quotaProviderType",
+      "quotaBaseUrl",
+      "quotaApiKey",
+      "quotaAccessToken",
+      "quotaUserId",
+    ]);
     const configAffecting = Object.keys(patch).some(
-      (key) => key !== "extraConfig" && key !== "authConfig",
+      (key) => !configPassthroughKeys.has(key),
     );
     if (syncFullConfig && configAffecting) {
       next.extraConfig = buildAgentFullConfig(tool, next, draft.extraConfig);
@@ -2164,6 +2267,11 @@ function AgentConfigCard({
       sonnetModelName: "",
       opusModel: "",
       opusModelName: "",
+      quotaProviderType: "",
+      quotaBaseUrl: "",
+      quotaApiKey: "",
+      quotaAccessToken: "",
+      quotaUserId: "",
     });
   };
 
@@ -2185,6 +2293,11 @@ function AgentConfigCard({
       opusModelName: provider.opusModelName ?? "",
       extraConfig: "",
       authConfig: draft.authConfig,
+      quotaProviderType: quotaProviderTypeField(provider.quotaProviderType),
+      quotaBaseUrl: "",
+      quotaApiKey: "",
+      quotaAccessToken: provider.quotaAccessToken ?? "",
+      quotaUserId: provider.quotaUserId ?? "",
     };
     onDraftChange({
       ...nextDraft,
@@ -2334,6 +2447,11 @@ function AgentConfigCard({
       opusModelName: provider.opusModelName ?? "",
       extraConfig: "",
       authConfig: draft.authConfig,
+      quotaProviderType: quotaProviderTypeField(provider.quotaProviderType),
+      quotaBaseUrl: "",
+      quotaApiKey: "",
+      quotaAccessToken: provider.quotaAccessToken ?? "",
+      quotaUserId: provider.quotaUserId ?? "",
     };
     return {
       ...nextDraft,
@@ -2605,6 +2723,60 @@ function AgentConfigCard({
             </button>
           </div>
         </label>
+
+        {usesCustom && (
+          <div className="xy-agent-quota xy-field--wide">
+            <div className="xy-agent-quota-head">
+              <span className="xy-agent-quota-title">
+                <Gauge size={12} strokeWidth={1.8} />
+                额度查询
+              </span>
+              <label className="xy-field xy-agent-quota-kind">
+                <span>接口</span>
+                <select
+                  value={draft.quotaProviderType}
+                  onChange={(e) =>
+                    updateDraft({
+                      quotaProviderType: quotaProviderTypeField(e.target.value),
+                    })
+                  }
+                >
+                  {QUOTA_PROVIDER_OPTIONS.map((option) => (
+                    <option key={option.value || "none"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {draft.quotaProviderType === "newapi" && (
+              <div className="xy-agent-quota-fields">
+                <label className="xy-field">
+                  <span>Access Token</span>
+                  <input
+                    value={draft.quotaAccessToken}
+                    type="password"
+                    placeholder="Bearer Token"
+                    onChange={(e) =>
+                      updateDraft({ quotaAccessToken: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="xy-field">
+                  <span>用户 ID</span>
+                  <input
+                    value={draft.quotaUserId}
+                    placeholder="New-Api-User"
+                    onChange={(e) =>
+                      updateDraft({ quotaUserId: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
 
         {tool === "claude" ? (
           <div className="xy-agent-role-models xy-field--wide">

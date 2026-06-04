@@ -836,12 +836,30 @@ body,
   min-width: 0;
 }
 
+.xy-status-left {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.xy-status-right {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+
 .xy-status-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--xy-fg);
   white-space: nowrap;
+}
+
+.xy-status-uptime {
+  display: inline-block;
+  width: 8ch;
+  font-family: var(--xy-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
 .xy-status-chip[data-tone="running"] svg {
@@ -867,6 +885,193 @@ body,
   white-space: nowrap;
 }
 
+.xy-status-cwd-btn {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.xy-status-cwd-btn:hover {
+  color: var(--xy-fg);
+}
+
+.xy-status-cwd-btn:disabled {
+  cursor: default;
+  color: var(--xy-fg-muted);
+}
+
+.xy-status-agent {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 430px;
+  height: 22px;
+  align-items: center;
+  gap: 5px;
+  color: var(--xy-fg-muted);
+}
+
+.xy-status-provider-control {
+  position: relative;
+  display: inline-flex;
+  width: 142px;
+  min-width: 112px;
+  height: 22px;
+  align-items: center;
+}
+
+.xy-status-provider-trigger {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  background: color-mix(in srgb, var(--xy-surface-sunken) 68%, transparent);
+  border: 1px solid var(--xy-border-soft);
+  border-radius: 5px;
+  color: var(--xy-fg);
+  font: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
+.xy-status-provider-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--xy-accent) 58%, var(--xy-border));
+  box-shadow: 0 0 0 2px var(--xy-accent-soft);
+}
+
+.xy-status-provider-trigger:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.xy-status-provider-icon,
+.xy-status-provider-option-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--xy-accent);
+}
+
+.xy-status-provider-label,
+.xy-status-provider-option-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.xy-status-provider-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  display: inline-flex;
+  width: 178px;
+  max-height: 240px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--xy-surface) 96%, transparent);
+  border: 1px solid var(--xy-border);
+  border-radius: 7px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+  overflow-y: auto;
+}
+
+.xy-status-provider-option {
+  display: inline-flex;
+  width: 100%;
+  height: 26px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--xy-fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.xy-status-provider-option:hover,
+.xy-status-provider-option[data-active="true"] {
+  background: var(--xy-surface-hover);
+  color: var(--xy-fg);
+}
+
+.xy-status-provider-option[data-active="true"] {
+  color: var(--xy-accent);
+}
+
+.xy-status-quota {
+  display: inline-flex;
+  min-width: 112px;
+  max-width: 230px;
+  height: 22px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--xy-surface-sunken) 58%, transparent);
+  border: 1px solid var(--xy-border-soft);
+  border-radius: 5px;
+  color: var(--xy-fg-muted);
+  overflow: hidden;
+}
+
+.xy-status-quota span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xy-status-quota[data-tone="ready"] {
+  border-color: color-mix(in srgb, var(--xy-success) 34%, var(--xy-border));
+  color: var(--xy-success);
+}
+
+.xy-status-quota[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--xy-danger) 34%, var(--xy-border));
+  color: var(--xy-danger);
+}
+
+.xy-status-quota-refresh {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--xy-fg-muted);
+  cursor: pointer;
+}
+
+.xy-status-quota-refresh:hover {
+  background: var(--xy-surface-hover);
+  color: var(--xy-fg);
+}
+
+.xy-status-quota-refresh:disabled,
+.xy-status-quota-refresh:disabled:hover {
+  cursor: default;
+  background: transparent;
+  color: var(--xy-fg-faint);
+  opacity: 0.55;
+}
+
 .xy-status-pill {
   display: inline-flex;
   align-items: center;
@@ -888,6 +1093,28 @@ body,
 .xy-status-pill:nth-child(2)::before,
 .xy-status-pill:nth-child(3)::before {
   display: none;
+}
+
+@media (max-width: 980px) {
+  .xy-status-agent {
+    max-width: 320px;
+  }
+
+  .xy-status-quota {
+    min-width: 92px;
+    max-width: 142px;
+  }
+
+  .xy-status-cwd {
+    max-width: 180px;
+  }
+}
+
+@media (max-width: 720px) {
+  .xy-status-agent,
+  .xy-status-chip--ghost:has(.xy-status-cwd) {
+    display: none;
+  }
 }
 
 /* ── Dockview header action slots ───────────────────────────────────────── */
@@ -2475,6 +2702,45 @@ body,
   gap: 8px;
 }
 
+.xy-agent-quota {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--xy-surface) 58%, transparent);
+  border: 1px solid var(--xy-border-soft);
+  border-radius: var(--xy-radius-sm);
+}
+
+.xy-agent-quota-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(128px, 180px);
+  align-items: end;
+  gap: 8px;
+}
+
+.xy-agent-quota-title {
+  display: inline-flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 5px;
+  color: var(--xy-fg-faint);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.xy-agent-quota-kind > span {
+  display: none !important;
+}
+
+.xy-agent-quota-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .xy-agent-detail-switch {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3183,6 +3449,15 @@ body,
   .xy-agent-provider-grid,
   .xy-agent-fields {
     grid-template-columns: 1fr;
+  }
+
+  .xy-agent-quota-head,
+  .xy-agent-quota-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .xy-agent-quota-title {
+    height: auto;
   }
 
   .xy-agent-model-item {

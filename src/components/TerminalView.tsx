@@ -45,6 +45,7 @@ type AgentLaunchState = "idle" | "starting" | "ready" | "failed";
  * a heavy ref-passing dance.
  */
 const REGISTRY = new Map<string, Terminal>();
+const RESTART_REGISTRY = new Map<string, () => Promise<void> | void>();
 const ALT_V = [27, 118];
 const CTRL_V = [22];
 const LAYOUT_KEY = "xuya-layout";
@@ -54,6 +55,13 @@ let agentSessionLookupQueue: Promise<void> = Promise.resolve();
 
 export function clearTerminal(panelId: string): void {
   REGISTRY.get(panelId)?.clear();
+}
+
+export function restartAgentTerminal(panelId: string): boolean {
+  const restart = RESTART_REGISTRY.get(panelId);
+  if (!restart) return false;
+  void restart();
+  return true;
 }
 
 function shellLabelFor(kind: string): string {
@@ -281,13 +289,15 @@ export default function TerminalView(
     let agentSlowTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
     let isOpen = false;
+    let restartingAgent = false;
+    let suppressExitUntil = 0;
     let agentLaunchSettled = !props.params?.agentCommand;
     let agentStartupOutput = "";
     const agentOutputDecoder = new TextDecoder();
     let openObserver: ResizeObserver | null = null;
     let openTimer: ReturnType<typeof setTimeout> | null = null;
     const openWaiters: Array<() => void> = [];
-    const ptyId = createPtyId();
+    let ptyId = createPtyId();
 
     const resolveOpenWaiters = (): void => {
       while (openWaiters.length > 0) {
@@ -318,11 +328,27 @@ export default function TerminalView(
       return true;
     };
 
+    const clearAgentLaunchTimers = (): void => {
+      if (agentReadyTimer) clearTimeout(agentReadyTimer);
+      if (agentSlowTimer) clearTimeout(agentSlowTimer);
+      agentReadyTimer = null;
+      agentSlowTimer = null;
+    };
+
+    const startAgentSlowTimer = (): void => {
+      if (!props.params?.agentCommand) return;
+      if (agentSlowTimer) clearTimeout(agentSlowTimer);
+      agentSlowTimer = setTimeout(() => {
+        if (!disposed && !agentLaunchSettled) {
+          setAgentLaunchMessage(`${label} 启动时间较长，仍在等待输出`);
+        }
+      }, 12000);
+    };
+
     const markAgentReady = (): void => {
       if (disposed || agentLaunchSettled) return;
       agentLaunchSettled = true;
-      if (agentReadyTimer) clearTimeout(agentReadyTimer);
-      if (agentSlowTimer) clearTimeout(agentSlowTimer);
+      clearAgentLaunchTimers();
       setAgentLaunchState("ready");
       setAgentLaunchMessage("");
     };
@@ -330,8 +356,7 @@ export default function TerminalView(
     const markAgentFailed = (message: string): void => {
       if (disposed || agentLaunchSettled) return;
       agentLaunchSettled = true;
-      if (agentReadyTimer) clearTimeout(agentReadyTimer);
-      if (agentSlowTimer) clearTimeout(agentSlowTimer);
+      clearAgentLaunchTimers();
       setAgentLaunchState("failed");
       setAgentLaunchMessage(message);
     };
@@ -377,11 +402,7 @@ export default function TerminalView(
     tryOpenTerminal();
     openTimer = setTimeout(tryOpenTerminal, 100);
     if (props.params?.agentCommand) {
-      agentSlowTimer = setTimeout(() => {
-        if (!disposed && !agentLaunchSettled) {
-          setAgentLaunchMessage(`${label} 启动时间较长，仍在等待输出`);
-        }
-      }, 12000);
+      startAgentSlowTimer();
     }
 
     const lookupAgentSession = async (
@@ -456,10 +477,118 @@ export default function TerminalView(
       }, attempt === 0 ? 1500 : 3000);
     };
 
-    (async () => {
-      await waitForTerminalOpen();
+    const handlePtyChunk = (event: {
+      payload: {
+        type: string;
+        data?: number[];
+        code?: number;
+      };
+    }) => {
       if (disposed) return;
+      const p = event.payload;
+      if (p.type === "Data" && p.data) {
+        const bytes = new Uint8Array(p.data);
+        if (!agentLaunchSettled) {
+          agentStartupOutput = (
+            agentStartupOutput + agentOutputDecoder.decode(bytes, { stream: true })
+          ).slice(-4000);
+          if (hasAgentStartupError(agentStartupOutput)) {
+            markAgentFailed(`${label} 启动失败`);
+          }
+          scheduleAgentReady();
+        }
+        hideCodexCursor();
+        term.write(bytes);
+      } else if (p.type === "Exit") {
+        if (Date.now() < suppressExitUntil) {
+          suppressExitUntil = 0;
+          return;
+        }
+        term.writeln(
+          `\r\n\x1b[90m[Process exited${
+            p.code != null ? ` code ${p.code}` : ""
+          }]\x1b[0m`,
+        );
+        updateSession(props.api.id, {
+          status: "exited",
+          exitCode: p.code ?? undefined,
+        });
+        if (!agentLaunchSettled) {
+          markAgentFailed(`${label} 启动失败`);
+        }
+      }
+    };
 
+    const ensurePtyListener = async (): Promise<boolean> => {
+      if (unlisten) return true;
+      unlisten = await listen<{
+        type: string;
+        data?: number[];
+        code?: number;
+      }>(`pty-chunk-${ptyId}`, handlePtyChunk);
+      if (!disposed) return true;
+      unlisten();
+      unlisten = null;
+      return false;
+    };
+
+    const openPty = async (
+      startupCommand: string | null | undefined,
+    ): Promise<number | undefined> => {
+      const commandStartedAt = Date.now();
+      if (unlisten) {
+        unlisten();
+        unlisten = null;
+      }
+      ptyId = createPtyId();
+      const listening = await ensurePtyListener();
+      if (!listening || disposed) return undefined;
+
+      try {
+        lastTerminalSizeRef.current = { rows: term.rows, cols: term.cols };
+        id = await invoke("pty_open", {
+          spec: {
+            id: ptyId,
+            shellKind,
+            cwd: cwd ?? null,
+            rows: term.rows,
+            cols: term.cols,
+            launchCommand: props.params?.launchCommand ?? null,
+            startupCommand,
+          },
+        });
+      } catch (err) {
+        if (disposed) return undefined;
+        markAgentFailed(`${label} 启动失败`);
+        term.writeln(`\x1b[31m[PTY Error] ${err}\x1b[0m`);
+        return undefined;
+      }
+      if (disposed) {
+        invoke("pty_close", { id }).catch(() => {});
+        return undefined;
+      }
+
+      return commandStartedAt;
+    };
+
+    const wireTerminalInput = (): void => {
+      if (dataDisposable) return;
+      dataDisposable = term.onData((data) => {
+        if (agentCommandRef.current === "codex") {
+          if (/[\r\n]/.test(data)) {
+            hideCodexCursor(true);
+          } else {
+            showCodexInputCursorBriefly();
+          }
+        }
+        invoke("pty_write", {
+          id,
+          data: Array.from(new TextEncoder().encode(data)),
+        }).catch(() => {});
+      });
+    };
+
+    const launchPanelPty = async (initial: boolean): Promise<boolean> => {
       const agentCmd = props.params?.agentCommand;
       const storedAgentSessionId =
         props.params?.agentSessionId ?? getStoredAgentSessionId(props.api.id);
@@ -479,102 +608,40 @@ export default function TerminalView(
       if (startup.error) {
         markAgentFailed(startup.error);
         term.writeln(`\x1b[31m[Agent Error] ${startup.error}\x1b[0m`);
-        return;
+        return false;
       }
-
-      const openPty = async () => {
-        const startupCommand =
-          startup.command ?? props.params?.startupCommand ?? null;
-        const commandStartedAt = Date.now();
-        unlisten = await listen<{
-          type: string;
-          data?: number[];
-          code?: number;
-        }>(`pty-chunk-${ptyId}`, (event) => {
-          if (disposed) return;
-          const p = event.payload;
-          if (p.type === "Data" && p.data) {
-            const bytes = new Uint8Array(p.data);
-            if (!agentLaunchSettled) {
-              agentStartupOutput = (
-                agentStartupOutput + agentOutputDecoder.decode(bytes, { stream: true })
-              ).slice(-4000);
-              if (hasAgentStartupError(agentStartupOutput)) {
-                markAgentFailed(`${label} 启动失败`);
-              }
-              scheduleAgentReady();
-            }
-            hideCodexCursor();
-            term.write(bytes);
-          } else if (p.type === "Exit") {
-            term.writeln(
-              `\r\n\x1b[90m[Process exited${
-                p.code != null ? ` code ${p.code}` : ""
-              }]\x1b[0m`,
-            );
-            updateSession(props.api.id, {
-              status: "exited",
-              exitCode: p.code ?? undefined,
-            });
-            if (!agentLaunchSettled) {
-              markAgentFailed(`${label} 启动失败`);
-            }
-          }
-        });
-        if (disposed) {
-          unlisten();
-          unlisten = null;
-          return undefined;
-        }
-
-        try {
-          lastTerminalSizeRef.current = { rows: term.rows, cols: term.cols };
-          id = await invoke("pty_open", {
-            spec: {
-              id: ptyId,
-              shellKind,
-              cwd: cwd ?? null,
-              rows: term.rows,
-              cols: term.cols,
-              launchCommand: props.params?.launchCommand ?? null,
-              startupCommand,
-            },
-          });
-        } catch (err) {
-          if (disposed) return undefined;
-          markAgentFailed(`${label} 启动失败`);
-          term.writeln(`\x1b[31m[PTY Error] ${err}\x1b[0m`);
-          return undefined;
-        }
-        if (disposed) {
-          invoke("pty_close", { id }).catch(() => {});
-          return undefined;
-        }
-
-        return commandStartedAt;
-      };
 
       const agentCmdToBind =
         agentCmd && !resolvedAgentSessionId ? agentCmd : undefined;
-      const commandStartedAt = await openPty();
+      const commandStartedAt = await openPty(
+        startup.command ?? props.params?.startupCommand ?? null,
+      );
 
-      if (!commandStartedAt || disposed || !id) return;
+      if (!commandStartedAt || disposed || !id) return false;
 
       sessionIdRef.current = id;
 
       // Prefer an explicit label — falls back to shell / agent label.
       props.api.setTitle?.(label);
 
-      // Register in the session store now that we have the PTY id.
-      addSession({
-        id: props.api.id,
-        label,
-        shellKind,
-        agentCommand: props.params?.agentCommand,
-        cwd: cwd ?? "—",
-        startTime: Date.now(),
-        status: "running",
-      });
+      if (initial) {
+        // Register in the session store now that we have the PTY id.
+        addSession({
+          id: props.api.id,
+          label,
+          shellKind,
+          agentCommand: props.params?.agentCommand,
+          cwd: cwd ?? "—",
+          startTime: Date.now(),
+          status: "running",
+        });
+      } else {
+        updateSession(props.api.id, {
+          startTime: Date.now(),
+          status: "running",
+          exitCode: undefined,
+        });
+      }
 
       if (agentCmdToBind && !sessionLookupTimer) {
         scheduleAgentSessionLookup(agentCmdToBind, commandStartedAt, 0, () => {
@@ -582,22 +649,57 @@ export default function TerminalView(
         });
       }
 
-      // Wire keyboard input.
-      dataDisposable = term.onData((data) => {
-        if (agentCommandRef.current === "codex") {
-          if (/[\r\n]/.test(data)) {
-            hideCodexCursor(true);
-          } else {
-            showCodexInputCursorBriefly();
-          }
-        }
-        invoke("pty_write", {
-          id,
-          data: Array.from(new TextEncoder().encode(data)),
-        }).catch(() => {});
-      });
+      wireTerminalInput();
 
       if (props.api.isActive) term.focus();
+      return true;
+    };
+
+    const restartCurrentAgent = async (): Promise<void> => {
+      if (disposed || restartingAgent || !props.params?.agentCommand) return;
+
+      restartingAgent = true;
+      try {
+        if (sessionLookupTimer) {
+          clearTimeout(sessionLookupTimer);
+          sessionLookupTimer = null;
+        }
+        clearAgentLaunchTimers();
+        agentLaunchSettled = false;
+        agentStartupOutput = "";
+        setAgentLaunchState("starting");
+        setAgentLaunchMessage(`正在重新启动 ${label}`);
+        term.clear();
+        term.writeln(`\x1b[90m[Reloading ${label}]\x1b[0m`);
+
+        if (id) {
+          const previousId = id;
+          suppressExitUntil = Date.now() + 3000;
+          if (unlisten) {
+            unlisten();
+            unlisten = null;
+          }
+          id = "";
+          sessionIdRef.current = null;
+          await invoke("pty_close", { id: previousId }).catch(() => {});
+        }
+
+        await waitForTerminalOpen();
+        if (disposed) return;
+        startAgentSlowTimer();
+        await launchPanelPty(false);
+      } finally {
+        restartingAgent = false;
+      }
+    };
+
+    RESTART_REGISTRY.set(props.api.id, restartCurrentAgent);
+
+    (async () => {
+      await waitForTerminalOpen();
+      if (disposed) return;
+
+      await launchPanelPty(true);
     })();
 
     return () => {
@@ -619,6 +721,7 @@ export default function TerminalView(
       if (id) invoke("pty_close", { id }).catch(() => {});
       term.dispose();
       REGISTRY.delete(props.api.id);
+      RESTART_REGISTRY.delete(props.api.id);
       removeSession(props.api.id);
       termRef.current = null;
       fitAddonRef.current = null;

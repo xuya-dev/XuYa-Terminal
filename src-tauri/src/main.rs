@@ -27,6 +27,7 @@ fn main() {
             commands::save_agent_builtin_provider,
             commands::delete_agent_custom_provider,
             commands::fetch_agent_provider_models,
+            commands::fetch_agent_provider_quota,
         ])
         .run(tauri::generate_context!())
         .expect("error while running XuYa");
