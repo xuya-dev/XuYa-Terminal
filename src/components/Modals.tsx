@@ -1713,6 +1713,12 @@ function AgentConfigCard({
     null,
   );
   const [showApiKey, setShowApiKey] = useState(false);
+  const hasModelFetchApiKey = draft.apiKey.trim().length > 0;
+  const modelListTitle = usesOfficial
+    ? "官方登录不支持拉取模型列表"
+    : hasModelFetchApiKey
+      ? "根据当前 KEY 获取模型列表"
+      : "请先填写 API Key";
 
   const updateDraft = (
     patch: Partial<AgentDraft>,
@@ -1798,6 +1804,10 @@ function AgentConfigCard({
       setModelFetchMessage({ tone: "error", text: "官方登录不支持拉取模型列表。" });
       return;
     }
+    if (!draft.apiKey.trim()) {
+      setModelFetchMessage({ tone: "error", text: "请先填写 API Key。" });
+      return;
+    }
     if (!draft.baseUrl.trim()) {
       setModelFetchMessage({ tone: "error", text: "请先填写基础地址。" });
       return;
@@ -1813,7 +1823,7 @@ function AgentConfigCard({
             tool,
             providerId: draft.providerId,
             baseUrl: draft.baseUrl,
-            apiKey: draft.apiKey,
+            apiKey: draft.apiKey.trim(),
           },
         },
       );
@@ -1839,7 +1849,7 @@ function AgentConfigCard({
   const applyFetchedModel = (
     modelId: string,
     target: "model" | "sonnetModel" | "opusModel" | "haikuModel" =
-      tool === "claude" ? "sonnetModel" : "model",
+      tool === "claude" ? "opusModel" : "model",
   ) => {
     if (target === "sonnetModel") {
       updateDraft({ sonnetModel: modelId });
@@ -1850,6 +1860,20 @@ function AgentConfigCard({
     } else {
       updateDraft({ model: modelId });
     }
+  };
+
+  const handleModelListToggle = () => {
+    if (activeDetail === "models") {
+      setActiveDetail(null);
+      return;
+    }
+
+    if (usesOfficial || !hasModelFetchApiKey) {
+      return;
+    }
+
+    setActiveDetail("models");
+    void handleFetchModels();
   };
 
   return (
@@ -2024,6 +2048,14 @@ function AgentConfigCard({
             <span className="xy-agent-role-title">Claude 模型角色</span>
             <div className="xy-agent-role-grid">
               <label className="xy-field">
+                <span>Opus</span>
+                <input
+                  value={draft.opusModel}
+                  placeholder="claude-opus / deepseek-v4-pro"
+                  onChange={(e) => updateDraft({ opusModel: e.target.value })}
+                />
+              </label>
+              <label className="xy-field">
                 <span>Sonnet</span>
                 <input
                   value={draft.sonnetModel}
@@ -2031,14 +2063,6 @@ function AgentConfigCard({
                   onChange={(e) =>
                     updateDraft({ sonnetModel: e.target.value })
                   }
-                />
-              </label>
-              <label className="xy-field">
-                <span>Opus</span>
-                <input
-                  value={draft.opusModel}
-                  placeholder="claude-opus / deepseek-v4-pro"
-                  onChange={(e) => updateDraft({ opusModel: e.target.value })}
                 />
               </label>
               <label className="xy-field">
@@ -2076,9 +2100,12 @@ function AgentConfigCard({
               activeDetail === "models" ? "is-active" : ""
             }`}
             type="button"
-            onClick={() =>
-              setActiveDetail(activeDetail === "models" ? null : "models")
+            disabled={
+              activeDetail !== "models" &&
+              (fetchingModels || usesOfficial || !hasModelFetchApiKey)
             }
+            title={modelListTitle}
+            onClick={handleModelListToggle}
           >
             <Download size={13} strokeWidth={1.8} />
             模型列表
@@ -2104,12 +2131,14 @@ function AgentConfigCard({
               <button
                 className="xy-mini-btn xy-mini-btn--compact"
                 type="button"
-                disabled={fetchingModels || usesOfficial || saving || applying}
-                title={
-                  usesOfficial
-                    ? "官方登录不支持拉取模型列表"
-                    : "从当前厂商获取模型列表"
+                disabled={
+                  fetchingModels ||
+                  usesOfficial ||
+                  !hasModelFetchApiKey ||
+                  saving ||
+                  applying
                 }
+                title={modelListTitle}
                 onClick={() => void handleFetchModels()}
               >
                 {fetchingModels ? (
@@ -2145,18 +2174,18 @@ function AgentConfigCard({
                         <button
                           type="button"
                           onClick={() =>
-                            applyFetchedModel(model.id, "sonnetModel")
-                          }
-                        >
-                          Sonnet
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
                             applyFetchedModel(model.id, "opusModel")
                           }
                         >
                           Opus
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyFetchedModel(model.id, "sonnetModel")
+                          }
+                        >
+                          Sonnet
                         </button>
                         <button
                           type="button"

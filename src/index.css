@@ -2242,6 +2242,13 @@ body,
   padding-right: 36px;
 }
 
+.xy-agent-secret-input input[type="password"]::-ms-clear,
+.xy-agent-secret-input input[type="password"]::-ms-reveal {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .xy-agent-secret-toggle {
   position: absolute;
   top: 50%;
@@ -2259,6 +2266,7 @@ body,
   cursor: pointer;
   transform: translateY(-50%);
   transition: background 0.12s, color 0.12s;
+  z-index: 1;
 }
 
 .xy-agent-secret-toggle:hover {
@@ -2333,6 +2341,11 @@ body,
   background: var(--xy-accent-soft);
   border-color: color-mix(in srgb, var(--xy-accent) 42%, var(--xy-border));
   color: var(--xy-accent-soft-fg);
+}
+
+.xy-agent-detail-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .xy-agent-model-fetch {
