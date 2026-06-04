@@ -1,5 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { open } from "@tauri-apps/plugin-shell";
 import { useEffect, useCallback, useRef, useState, type ReactNode } from "react";
 import {
   AlertCircle,
@@ -7,6 +8,8 @@ import {
   ArrowUp,
   CheckCircle2,
   Download,
+  ExternalLink,
+  Github,
   Loader2,
   Plus,
   RotateCcw,
@@ -38,6 +41,8 @@ const CURSOR_OPTIONS: { value: CursorStyle; label: string }[] = [
   { value: "block", label: "方块" },
   { value: "underline", label: "下划线" },
 ];
+
+const PROJECT_REPOSITORY_URL = "https://github.com/xuya-dev/XuYa-Terminal";
 
 type UpdateStatus =
   | "idle"
@@ -716,6 +721,12 @@ function SessionMenuEditor({
 
 function AboutModal() {
   const closeModal = useModalStore((s) => s.closeModal);
+  const openRepository = useCallback(() => {
+    void open(PROJECT_REPOSITORY_URL).catch((error) => {
+      console.error("[AboutModal] Failed to open repository:", error);
+    });
+  }, []);
+
   return (
     <ModalShell title="关于 XuYa Terminal" onClose={closeModal}>
       <div className="xy-about-layout">
@@ -733,6 +744,22 @@ function AboutModal() {
             <span>React 19</span>
           </div>
         </div>
+
+        <button
+          className="xy-about-link"
+          type="button"
+          onClick={openRepository}
+          title="打开 GitHub 仓库"
+        >
+          <span className="xy-about-link-icon">
+            <Github size={17} strokeWidth={1.8} />
+          </span>
+          <span className="xy-about-link-copy">
+            <span className="xy-about-link-label">GitHub 仓库</span>
+            <span className="xy-about-link-url">{PROJECT_REPOSITORY_URL}</span>
+          </span>
+          <ExternalLink className="xy-about-link-action" size={15} strokeWidth={1.8} />
+        </button>
 
         <AutoUpdatePanel />
       </div>
