@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -22,6 +23,7 @@ import {
   getAgentCommandName,
   parseAgentCommand,
 } from "../lib/agentCommand";
+import ContextMenu, { type MenuEntry } from "./ContextMenu";
 
 interface TerminalViewParams {
   shellKind: ShellKind;
@@ -93,6 +95,7 @@ export default function TerminalView(
   const [agentLaunchMessage, setAgentLaunchMessage] = useState(
     agentCommand ? `正在启动 ${label}` : "",
   );
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   const palette = useThemeStore((s) => s.palette);
   const zoom = useSettingsStore((s) => s.zoom);
@@ -234,6 +237,20 @@ export default function TerminalView(
           invoke("pty_write", { id: sid, data: ALT_V }).catch(() => {});
         }
         return false;
+      }
+
+      const isCopy =
+        e.type === "keydown" &&
+        ((e.ctrlKey && (e.key?.toLowerCase() === "c" || e.code === "KeyC")) ||
+         (e.ctrlKey && e.shiftKey && (e.key?.toLowerCase() === "c" || e.code === "KeyC")) ||
+         (e.metaKey && (e.key?.toLowerCase() === "c" || e.code === "KeyC")));
+
+      if (isCopy) {
+        if (term.hasSelection()) {
+          navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+          return false;
+        }
+        return true;
       }
 
       const isPaste =
@@ -777,6 +794,80 @@ export default function TerminalView(
     };
   }, [agentCommand]);
 
+  // Intercept native copy events to copy selected terminal text.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const handleCopy = (e: ClipboardEvent) => {
+      const term = termRef.current;
+      if (term && term.hasSelection()) {
+        e.clipboardData?.setData("text/plain", term.getSelection());
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    el.addEventListener("copy", handleCopy, true);
+    return () => {
+      el.removeEventListener("copy", handleCopy, true);
+    };
+  }, []);
+
+  // Handle file drag and drop from Tauri OS window
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    // Prevent default browser dragover/drop behaviors to avoid navigation
+    const preventDefault = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    el.addEventListener("dragover", preventDefault, true);
+    el.addEventListener("drop", preventDefault, true);
+
+    const unlistenPromise = getCurrentWindow().onDragDropEvent((event) => {
+      if (event.payload.type !== "drop") return;
+      const container = containerRef.current;
+      if (!container) return;
+
+      const { x, y } = event.payload.position;
+      const dpr = window.devicePixelRatio || 1;
+      const logicalX = x / dpr;
+      const logicalY = y / dpr;
+
+      const rect = container.getBoundingClientRect();
+      const isInside =
+        logicalX >= rect.left &&
+        logicalX <= rect.right &&
+        logicalY >= rect.top &&
+        logicalY <= rect.bottom;
+
+      if (isInside) {
+        const paths = event.payload.paths;
+        if (paths && paths.length > 0) {
+          const pathTexts = paths.map((path) => quotePath(path));
+          termRef.current?.focus();
+          const sid = sessionIdRef.current;
+          if (sid) {
+            const encoded = Array.from(
+              new TextEncoder().encode(pathTexts.join(" ")),
+            );
+            invoke("pty_write", { id: sid, data: encoded }).catch(() => {});
+          }
+        }
+      }
+    });
+
+    return () => {
+      el.removeEventListener("dragover", preventDefault, true);
+      el.removeEventListener("drop", preventDefault, true);
+      unlistenPromise.then((fn) => fn());
+    };
+  }, []);
+
   // Ctrl + mouse-wheel zoom, scoped to this panel's container.
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (!e.ctrlKey) return;
@@ -786,6 +877,59 @@ export default function TerminalView(
     else zoomOut();
   }, []);
 
+  const term = termRef.current;
+  const hasSel = term ? term.hasSelection() : false;
+
+  const contextMenuItems: MenuEntry[] = [
+    {
+      id: "copy",
+      label: "复制",
+      disabled: !hasSel,
+      onClick: () => {
+        if (term) {
+          navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+        }
+      },
+    },
+    {
+      id: "paste",
+      label: "粘贴",
+      onClick: async () => {
+        if (!term) return;
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            const sid = sessionIdRef.current;
+            if (sid) {
+              await invoke("pty_write", {
+                id: sid,
+                data: Array.from(new TextEncoder().encode(text)),
+              });
+            }
+          }
+        } catch (err) {
+          console.error("Clipboard paste failed:", err);
+        }
+      },
+    },
+    "separator",
+    {
+      id: "select-all",
+      label: "全选",
+      onClick: () => {
+        term?.selectAll();
+      },
+    },
+    {
+      id: "clear-selection",
+      label: "清除选择",
+      disabled: !hasSel,
+      onClick: () => {
+        term?.clearSelection();
+      },
+    },
+  ];
+
   return (
     <div
       ref={containerRef}
@@ -794,6 +938,10 @@ export default function TerminalView(
         if (!terminalOpenRef.current) return;
         termRef.current?.focus();
         showCodexInputCursorBriefly();
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
       }}
       onWheel={handleWheel}
     >
@@ -812,6 +960,14 @@ export default function TerminalView(
           <span className="xy-agent-launch__mark">!</span>
           <span>{agentLaunchMessage}</span>
         </div>
+      )}
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={contextMenuItems}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   );
