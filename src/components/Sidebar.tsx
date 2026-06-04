@@ -4,7 +4,7 @@ import {
   Plus,
   Settings,
   Palette,
-  HelpCircle,
+  Info,
   TerminalSquare,
   SquareTerminal,
   ChevronDown,
@@ -180,11 +180,11 @@ export default function Sidebar({ api }: Props) {
         </button>
         <button
           className="xy-sidebar-foot-btn"
-          title="帮助"
+          title="关于"
           onClick={() => openModal("about")}
         >
-          <HelpCircle size={14} strokeWidth={1.6} />
-          <span>帮助</span>
+          <Info size={14} strokeWidth={1.6} />
+          <span>关于</span>
         </button>
       </div>
     </aside>

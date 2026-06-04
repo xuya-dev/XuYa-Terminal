@@ -54,6 +54,14 @@ interface UpdateInfo {
   body?: string;
 }
 
+type SettingsTab = "appearance" | "terminal" | "sessions";
+
+const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
+  { value: "appearance", label: "外观" },
+  { value: "terminal", label: "终端" },
+  { value: "sessions", label: "会话菜单" },
+];
+
 /** Shared centered-modal shell with overlay + Esc-to-close. */
 function ModalShell({
   title,
@@ -220,6 +228,7 @@ function ThemeModal() {
 function SettingsModal() {
   const closeModal = useModalStore((s) => s.closeModal);
   const openModal = useModalStore((s) => s.openModal);
+  const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
   const {
     zoom,
     defaultShell,
@@ -235,78 +244,102 @@ function SettingsModal() {
 
   return (
     <ModalShell title="设置" onClose={closeModal}>
-      <ApplicationSettings />
-
-      <section className="xy-set-section">
-        <h3 className="xy-set-section-title">外观</h3>
-
-        <Row label="主题与外观" hint="配色家族、浅色/深色切换">
+      <div className="xy-settings-tabs" role="tablist" aria-label="设置分类">
+        {SETTINGS_TABS.map((tab) => (
           <button
-            className="xy-set-link-btn"
-            onClick={() => openModal("theme")}
+            key={tab.value}
+            className={`xy-settings-tab ${
+              activeTab === tab.value ? "is-active" : ""
+            }`}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.value}
+            onClick={() => setActiveTab(tab.value)}
           >
-            打开主题设置 →
+            {tab.label}
           </button>
-        </Row>
+        ))}
+      </div>
 
-        <Row label="终端字号" hint={`${zoom}% · ${Math.round((14 * zoom) / 100)}px`}>
-          <div className="xy-zoom-control">
-            <button className="xy-zoom-btn" onClick={zoomOut} title="缩小">
-              －
-            </button>
-            <input
-              className="xy-zoom-slider"
-              type="range"
-              min={50}
-              max={200}
-              step={10}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-            />
-            <button className="xy-zoom-btn" onClick={zoomIn} title="放大">
-              ＋
-            </button>
-          </div>
-        </Row>
-      </section>
+      <div className="xy-settings-panel" role="tabpanel">
+        {activeTab === "appearance" && (
+          <section className="xy-set-section">
+            <h3 className="xy-set-section-title">外观</h3>
 
-      <section className="xy-set-section">
-        <h3 className="xy-set-section-title">终端</h3>
+            <Row label="主题与外观" hint="配色家族、浅色/深色切换">
+              <button
+                className="xy-set-link-btn"
+                onClick={() => openModal("theme")}
+              >
+                打开主题设置 →
+              </button>
+            </Row>
 
-        <Row label="默认 Shell" hint="新建会话 / 新建标签使用">
-          <Segmented
-            value={defaultShell}
-            options={SHELL_OPTIONS}
-            onChange={setDefaultShell}
-          />
-        </Row>
+            <Row
+              label="终端字号"
+              hint={`${zoom}% · ${Math.round((14 * zoom) / 100)}px`}
+            >
+              <div className="xy-zoom-control">
+                <button className="xy-zoom-btn" onClick={zoomOut} title="缩小">
+                  －
+                </button>
+                <input
+                  className="xy-zoom-slider"
+                  type="range"
+                  min={50}
+                  max={200}
+                  step={10}
+                  value={zoom}
+                  onChange={(e) => setZoom(Number(e.target.value))}
+                />
+                <button className="xy-zoom-btn" onClick={zoomIn} title="放大">
+                  ＋
+                </button>
+              </div>
+            </Row>
+          </section>
+        )}
 
-        <Row label="光标样式">
-          <Segmented
-            value={cursorStyle}
-            options={CURSOR_OPTIONS}
-            onChange={setCursorStyle}
-          />
-        </Row>
+        {activeTab === "terminal" && (
+          <section className="xy-set-section">
+            <h3 className="xy-set-section-title">终端</h3>
 
-        <Row label="光标闪烁">
-          <button
-            className={`xy-switch ${cursorBlink ? "is-on" : ""}`}
-            role="switch"
-            aria-checked={cursorBlink}
-            onClick={() => setCursorBlink(!cursorBlink)}
-          >
-            <span className="xy-switch-knob" />
-          </button>
-        </Row>
-      </section>
+            <Row label="默认 Shell" hint="新建会话 / 新建标签使用">
+              <Segmented
+                value={defaultShell}
+                options={SHELL_OPTIONS}
+                onChange={setDefaultShell}
+              />
+            </Row>
 
-      <SessionMenuSettings />
+            <Row label="光标样式">
+              <Segmented
+                value={cursorStyle}
+                options={CURSOR_OPTIONS}
+                onChange={setCursorStyle}
+              />
+            </Row>
+
+            <Row label="光标闪烁">
+              <button
+                className={`xy-switch ${cursorBlink ? "is-on" : ""}`}
+                role="switch"
+                aria-checked={cursorBlink}
+                onClick={() => setCursorBlink(!cursorBlink)}
+              >
+                <span className="xy-switch-knob" />
+              </button>
+            </Row>
+          </section>
+        )}
+
+        {activeTab === "sessions" && <SessionMenuSettings />}
+      </div>
     </ModalShell>
   );
 }
 
-function ApplicationSettings() {
+function AutoUpdatePanel() {
   const [status, setStatus] = useState<UpdateStatus>("idle");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [message, setMessage] = useState("从 GitHub Releases 获取最新版本");
@@ -401,10 +434,10 @@ function ApplicationSettings() {
   };
 
   return (
-    <section className="xy-set-section">
-      <h3 className="xy-set-section-title">应用</h3>
+    <section className="xy-about-section">
+      <h3 className="xy-set-section-title">自动更新</h3>
 
-      <div className="xy-update-card" data-status={status}>
+      <div className="xy-update-card xy-update-card--about" data-status={status}>
         <div className="xy-update-status">
           <span className="xy-update-status-icon">{statusIcon}</span>
           <div className="xy-update-copy">
@@ -685,14 +718,18 @@ function AboutModal() {
   const closeModal = useModalStore((s) => s.closeModal);
   return (
     <ModalShell title="关于 XuYa Terminal" onClose={closeModal}>
-      <div className="xy-about">
-        <div className="xy-about-glyph">
-          <img src="/logo.png" alt="XuYa Terminal" width="48" height="48" />
+      <div className="xy-about-layout">
+        <div className="xy-about">
+          <div className="xy-about-glyph">
+            <img src="/logo.png" alt="XuYa Terminal" width="48" height="48" />
+          </div>
+          <div className="xy-about-name">XuYa Terminal</div>
+          <div className="xy-about-tag">面向 AI Agent 工程师的终端管理器</div>
+          <div className="xy-about-version">版本 0.1.1 · Tauri v2 · React 19</div>
+          <div className="xy-about-hint">按 Ctrl+Shift+P 打开命令面板</div>
         </div>
-        <div className="xy-about-name">XuYa Terminal</div>
-        <div className="xy-about-tag">面向 AI Agent 工程师的终端管理器</div>
-        <div className="xy-about-version">版本 0.1.1 · Tauri v2 · React 19</div>
-        <div className="xy-about-hint">按 Ctrl+Shift+P 打开命令面板</div>
+
+        <AutoUpdatePanel />
       </div>
     </ModalShell>
   );

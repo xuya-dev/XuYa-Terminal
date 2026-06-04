@@ -1650,6 +1650,46 @@ body,
 }
 
 /* Settings layout */
+.xy-settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 12px;
+  padding: 3px;
+  background: var(--xy-surface-sunken);
+  border: 1px solid var(--xy-border);
+  border-radius: var(--xy-radius-sm);
+}
+
+.xy-settings-tab {
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--xy-fg-muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+
+.xy-settings-tab:hover {
+  color: var(--xy-fg);
+}
+
+.xy-settings-tab.is-active {
+  background: var(--xy-surface);
+  color: var(--xy-fg);
+  box-shadow: 0 1px 0 color-mix(in srgb, white 8%, transparent) inset;
+}
+
+.xy-settings-panel {
+  min-height: 310px;
+}
+
 .xy-set-section {
   margin-top: 14px;
 }
@@ -1844,6 +1884,10 @@ body,
   background: var(--xy-surface-sunken);
   border: 1px solid var(--xy-border-soft);
   border-radius: var(--xy-radius-sm);
+}
+
+.xy-update-card--about {
+  text-align: left;
 }
 
 .xy-update-card[data-status="available"] {
@@ -2062,6 +2106,10 @@ body,
 }
 
 @media (max-width: 760px) {
+  .xy-settings-tabs {
+    grid-template-columns: 1fr;
+  }
+
   .xy-set-section-head,
   .xy-session-menu-card {
     flex-direction: column;
@@ -2139,13 +2187,24 @@ body,
 }
 
 /* About */
+.xy-about-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .xy-about {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 16px 0 8px;
+  padding: 16px 0 4px;
   gap: 6px;
+}
+
+.xy-about-section {
+  padding-top: 14px;
+  border-top: 1px solid var(--xy-border-soft);
 }
 
 .xy-about-glyph {
