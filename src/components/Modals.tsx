@@ -1677,7 +1677,7 @@ function AgentConfigCard({
           </label>
         )}
 
-        <label className="xy-field xy-field--wide">
+        <label className="xy-field">
           <span>
             <Server size={12} strokeWidth={1.8} />
             基础地址
