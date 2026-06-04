@@ -244,12 +244,14 @@ const CLAUDE_PROVIDER_OPTIONS: AgentProviderOption[] = [
   },
 ];
 
+const CODEX_DEFAULT_MODEL = "gpt-5.5";
+
 const CODEX_PROVIDER_OPTIONS: AgentProviderOption[] = [
   {
     id: "official",
     label: "官方",
     baseUrl: "",
-    model: "gpt-5-codex",
+    model: CODEX_DEFAULT_MODEL,
     color: "#00A67E",
     icon: <OpenAI size={14} />,
   },
@@ -257,7 +259,7 @@ const CODEX_PROVIDER_OPTIONS: AgentProviderOption[] = [
     id: "custom",
     label: "自定义",
     baseUrl: "",
-    model: "gpt-5-codex",
+    model: CODEX_DEFAULT_MODEL,
     color: "#64748B",
     icon: <NewAPI size={14} />,
   },
@@ -371,7 +373,7 @@ function customProviderSelector(id: string) {
 }
 
 function defaultCustomModel(tool: AgentTool) {
-  return tool === "codex" ? "gpt-5-codex" : "";
+  return tool === "codex" ? CODEX_DEFAULT_MODEL : "";
 }
 
 function roleModelFallback(provider: AgentProviderOption, role: "haiku" | "sonnet" | "opus") {
@@ -491,6 +493,68 @@ function tomlLineKey(line: string) {
   return trimmed.slice(0, index).trim() || undefined;
 }
 
+function parseTomlStringValue(line: string) {
+  const index = line.indexOf("=");
+  if (index === -1) return undefined;
+  const raw = line
+    .slice(index + 1)
+    .split("#")[0]
+    .trim();
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "string" ? parsed : undefined;
+  } catch {
+    return raw
+      .replace(/^['"]/, "")
+      .replace(/['"]$/, "")
+      .trim();
+  }
+}
+
+function extractTopLevelTomlString(text: string, key: string) {
+  let inSection = false;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[")) {
+      inSection = true;
+    }
+    if (inSection) continue;
+    if (tomlLineKey(trimmed) === key) return parseTomlStringValue(trimmed);
+  }
+  return undefined;
+}
+
+function extractCodexProviderTomlString(
+  text: string,
+  provider: string,
+  key: string,
+) {
+  const targetSection = `model_providers.${provider}`;
+  let inTargetSection = false;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    const section = parseTomlSectionHeader(trimmed);
+    if (section) {
+      inTargetSection = section === targetSection;
+      continue;
+    }
+    if (inTargetSection && tomlLineKey(trimmed) === key) {
+      return parseTomlStringValue(trimmed);
+    }
+  }
+  return undefined;
+}
+
+function inferCodexCustomName(extraConfig?: string | null) {
+  if (!extraConfig) return "";
+  const provider = extractTopLevelTomlString(extraConfig, "model_provider");
+  if (!provider || provider === "openai") return "";
+  return (
+    extractCodexProviderTomlString(extraConfig, provider, "name") ??
+    provider.replace(/^xuya_custom_?/, "")
+  );
+}
+
 function isXuyaCodexProviderSection(section: string) {
   const prefix = "model_providers.";
   if (!section.startsWith(prefix)) return false;
@@ -541,7 +605,7 @@ function mergeCodexConfig(prefix: string, preserved: string) {
 function buildCodexFullConfig(draft: AgentDraft, baseConfig?: string) {
   const provider = findProvider("codex", draft.providerId);
   const preserved = stripCodexManagedConfig(baseConfig ?? draft.extraConfig);
-  const model = draft.model.trim() || provider.model || "gpt-5-codex";
+  const model = draft.model.trim() || provider.model || CODEX_DEFAULT_MODEL;
   if (provider.id === "official" && !isCustomProviderId(draft.providerId)) {
     return mergeCodexConfig(
       `model_provider = "openai"\nmodel = ${tomlString(model)}`,
@@ -731,6 +795,15 @@ function endpointPreview(tool: AgentTool, baseUrl: string) {
   return base ? `${base}/responses` : "";
 }
 
+function isSameAgentBaseUrl(tool: AgentTool, left?: string | null, right?: string | null) {
+  if (!left || !right) return false;
+  const normalize =
+    tool === "claude"
+      ? normalizeClaudeBaseUrlForPreview
+      : normalizeCodexBaseUrlForPreview;
+  return normalize(left).toLowerCase() === normalize(right).toLowerCase();
+}
+
 function basenamePath(path?: string | null) {
   if (!path) return "";
   const normalized = path.replace(/\\/g, "/");
@@ -754,6 +827,67 @@ function findCustomProvider(
   const id = customProviderId(providerId);
   if (!id) return undefined;
   return customProviders?.find((provider) => provider.id === id);
+}
+
+function draftFromConfigState(
+  tool: AgentTool,
+  config: AgentToolConfigState,
+  current: AgentDraft,
+) {
+  if (!config.activeProvider && !config.baseUrl && !config.extraConfig) {
+    return current;
+  }
+
+  const providerId =
+    resolveStateProviderId(tool, config.activeProvider) ?? current.providerId;
+  const provider = findProvider(tool, providerId);
+  const customProvider = findCustomProvider(providerId, config.customProviders);
+  const next: AgentDraft = {
+    ...current,
+    providerId,
+    customName:
+      customProvider?.name ??
+      (tool === "codex" && providerId === "custom"
+        ? inferCodexCustomName(config.extraConfig)
+        : current.customName),
+    baseUrl: customProvider?.baseUrl ?? config.baseUrl ?? provider.baseUrl,
+    apiKey: "",
+    model:
+      customProvider?.model ??
+      config.model ??
+      provider.model ??
+      current.model,
+    haikuModel:
+      tool === "claude"
+        ? customProvider?.haikuModel ??
+          config.haikuModel ??
+          roleModelFallback(provider, "haiku") ??
+          current.haikuModel
+        : current.haikuModel,
+    sonnetModel:
+      tool === "claude"
+        ? customProvider?.sonnetModel ??
+          config.sonnetModel ??
+          roleModelFallback(provider, "sonnet") ??
+          current.sonnetModel
+        : current.sonnetModel,
+    opusModel:
+      tool === "claude"
+        ? customProvider?.opusModel ??
+          config.opusModel ??
+          roleModelFallback(provider, "opus") ??
+          current.opusModel
+        : current.opusModel,
+    extraConfig:
+      customProvider?.extraConfig ?? config.extraConfig ?? current.extraConfig,
+  };
+
+  return {
+    ...next,
+    extraConfig: next.extraConfig.trim()
+      ? next.extraConfig
+      : buildAgentFullConfig(tool, next, current.extraConfig),
+  };
 }
 
 /* ──────────────────────────────────────────── */
@@ -960,11 +1094,31 @@ function AgentConfigSettings() {
     loadAgentDraft("codex"),
   );
 
-  const loadState = useCallback(async () => {
+  const loadState = useCallback(async (options?: { hydrateTool?: AgentTool }) => {
     setLoading(true);
     try {
       const next = await invoke<AgentConfigState>("get_agent_config_state");
       setState(next);
+      const tool = options?.hydrateTool;
+      if (tool) {
+        const config = next[tool];
+        if (tool === "claude") {
+          setClaudeDraft((current) =>
+            draftFromConfigState("claude", config, current),
+          );
+        } else {
+          setCodexDraft((current) =>
+            draftFromConfigState("codex", config, current),
+          );
+        }
+        setActiveAgent(tool);
+        setMessage({
+          tone: config.exists ? "success" : "info",
+          text: config.exists
+            ? `${tool === "claude" ? "Claude Code" : "Codex"} 当前配置已回显。`
+            : `${tool === "claude" ? "Claude Code" : "Codex"} 配置文件还不存在。`,
+        });
+      }
     } catch (error) {
       setMessage({
         tone: "error",
@@ -982,77 +1136,12 @@ function AgentConfigSettings() {
   useEffect(() => {
     if (!state) return;
 
-    setClaudeDraft((current) => {
-      if (!state.claude.activeProvider && !state.claude.baseUrl) return current;
-      const providerId =
-        resolveStateProviderId("claude", state.claude.activeProvider) ??
-        current.providerId;
-      const provider = findProvider("claude", providerId);
-      const customProvider = findCustomProvider(
-        providerId,
-        state.claude.customProviders,
-      );
-      return {
-        ...current,
-        providerId,
-        customName: customProvider?.name ?? current.customName,
-        baseUrl: customProvider?.baseUrl ?? state.claude.baseUrl ?? provider.baseUrl,
-        model:
-          customProvider?.model ??
-          state.claude.model ??
-          provider.model ??
-          current.model,
-        haikuModel:
-          customProvider?.haikuModel ??
-          state.claude.haikuModel ??
-          roleModelFallback(provider, "haiku") ??
-          current.haikuModel,
-        sonnetModel:
-          customProvider?.sonnetModel ??
-          state.claude.sonnetModel ??
-          roleModelFallback(provider, "sonnet") ??
-          current.sonnetModel,
-        opusModel:
-          customProvider?.opusModel ??
-          state.claude.opusModel ??
-          roleModelFallback(provider, "opus") ??
-          current.opusModel,
-        extraConfig:
-          customProvider?.extraConfig ??
-          state.claude.extraConfig ??
-          current.extraConfig,
-      };
-    });
-
-    setCodexDraft((current) => {
-      if (!state.codex.activeProvider && !state.codex.baseUrl) return current;
-      const providerId =
-        resolveStateProviderId("codex", state.codex.activeProvider) ??
-        current.providerId;
-      const provider = findProvider("codex", providerId);
-      const customProvider = findCustomProvider(
-        providerId,
-        state.codex.customProviders,
-      );
-      return {
-        ...current,
-        providerId,
-        customName: customProvider?.name ?? current.customName,
-        baseUrl: customProvider?.baseUrl ?? state.codex.baseUrl ?? provider.baseUrl,
-        model:
-          customProvider?.model ??
-          state.codex.model ??
-          provider.model ??
-          current.model,
-        haikuModel: current.haikuModel,
-        sonnetModel: current.sonnetModel,
-        opusModel: current.opusModel,
-        extraConfig:
-          customProvider?.extraConfig ??
-          state.codex.extraConfig ??
-          current.extraConfig,
-      };
-    });
+    setClaudeDraft((current) =>
+      draftFromConfigState("claude", state.claude, current),
+    );
+    setCodexDraft((current) =>
+      draftFromConfigState("codex", state.codex, current),
+    );
   }, [state]);
 
   useEffect(() => persistAgentDraft("claude", claudeDraft), [claudeDraft]);
@@ -1087,7 +1176,15 @@ function AgentConfigSettings() {
         ? state?.claude.customProviders
         : state?.codex.customProviders,
     );
-    if (!draftToSave.apiKey.trim() && !currentCustom?.tokenConfigured) {
+    const currentToolState = tool === "claude" ? state?.claude : state?.codex;
+    const canReuseCurrentToken =
+      currentToolState?.tokenConfigured &&
+      isSameAgentBaseUrl(tool, draftToSave.baseUrl, currentToolState.baseUrl);
+    if (
+      !draftToSave.apiKey.trim() &&
+      !currentCustom?.tokenConfigured &&
+      !canReuseCurrentToken
+    ) {
       setMessage({ tone: "error", text: "请先填写 API Key。" });
       return null;
     }
@@ -1181,28 +1278,44 @@ function AgentConfigSettings() {
   ) => {
     let nextDraft = draftWithFullConfig(tool, draft);
     let provider = findProvider(tool, nextDraft.providerId);
+    let savedCustom: AgentCustomProviderSummary | null = null;
     if (isCustomProviderId(nextDraft.providerId)) {
-      const saved = await saveCustomProvider(tool, nextDraft, { silent: true });
-      if (!saved) return;
-      nextDraft = {
-        ...nextDraft,
-        providerId: customProviderSelector(saved.id),
-        customName: saved.name,
-        baseUrl: saved.baseUrl,
-        apiKey: "",
-        model: saved.model ?? defaultCustomModel(tool),
-        haikuModel: saved.haikuModel ?? "",
-        sonnetModel: saved.sonnetModel ?? "",
-        opusModel: saved.opusModel ?? "",
-        extraConfig: saved.extraConfig ?? "",
-      };
-      provider = findProvider(tool, nextDraft.providerId);
-    } else if (provider.id !== "official") {
+      const shouldSaveCustom = Boolean(customProviderId(nextDraft.providerId));
+      if (shouldSaveCustom) {
+        const saved = await saveCustomProvider(tool, nextDraft, { silent: true });
+        if (!saved) return;
+        savedCustom = saved;
+        nextDraft = {
+          ...nextDraft,
+          providerId: customProviderSelector(saved.id),
+          customName: saved.name,
+          baseUrl: saved.baseUrl,
+          apiKey: "",
+          model: saved.model ?? defaultCustomModel(tool),
+          haikuModel: saved.haikuModel ?? "",
+          sonnetModel: saved.sonnetModel ?? "",
+          opusModel: saved.opusModel ?? "",
+          extraConfig: saved.extraConfig ?? "",
+        };
+        provider = findProvider(tool, nextDraft.providerId);
+      }
+    }
+
+    if (provider.id !== "official") {
+      const storedCustom = findCustomProvider(
+        nextDraft.providerId,
+        currentState?.customProviders,
+      );
       if (!nextDraft.baseUrl.trim()) {
         setMessage({ tone: "error", text: "请先填写服务端点。" });
         return;
       }
-      if (!nextDraft.apiKey.trim() && !currentState?.tokenConfigured) {
+      if (
+        !nextDraft.apiKey.trim() &&
+        !currentState?.tokenConfigured &&
+        !storedCustom?.tokenConfigured &&
+        !savedCustom?.tokenConfigured
+      ) {
         setMessage({ tone: "error", text: "请先填写 API Key。" });
         return;
       }
@@ -1335,10 +1448,12 @@ function AgentConfigSettings() {
             providers={CLAUDE_PROVIDER_OPTIONS}
             draft={claudeDraft}
             state={state?.claude}
+            reading={loading}
             applying={applying === "claude"}
             saving={saving === "claude"}
             onDraftChange={setClaudeDraft}
             onSaveCustom={() => void saveCustomProvider("claude", claudeDraft)}
+            onLoadCurrent={() => void loadState({ hydrateTool: "claude" })}
             onDeleteCustom={(providerId) =>
               void deleteCustomProvider("claude", providerId)
             }
@@ -1356,10 +1471,12 @@ function AgentConfigSettings() {
             providers={CODEX_PROVIDER_OPTIONS}
             draft={codexDraft}
             state={state?.codex}
+            reading={loading}
             applying={applying === "codex"}
             saving={saving === "codex"}
             onDraftChange={setCodexDraft}
             onSaveCustom={() => void saveCustomProvider("codex", codexDraft)}
+            onLoadCurrent={() => void loadState({ hydrateTool: "codex" })}
             onDeleteCustom={(providerId) =>
               void deleteCustomProvider("codex", providerId)
             }
@@ -1393,10 +1510,12 @@ function AgentConfigCard({
   providers,
   draft,
   state,
+  reading,
   applying,
   saving,
   onDraftChange,
   onSaveCustom,
+  onLoadCurrent,
   onDeleteCustom,
   onApply,
 }: {
@@ -1408,10 +1527,12 @@ function AgentConfigCard({
   providers: AgentProviderOption[];
   draft: AgentDraft;
   state?: AgentToolConfigState;
+  reading: boolean;
   applying: boolean;
   saving: boolean;
   onDraftChange: (draft: AgentDraft) => void;
   onSaveCustom: () => void;
+  onLoadCurrent: () => void;
   onDeleteCustom: (providerId: string) => void;
   onApply: () => void;
 }) {
@@ -1761,7 +1882,7 @@ function AgentConfigCard({
             <span>模型</span>
             <input
               value={draft.model}
-              placeholder="gpt-5-codex"
+              placeholder={CODEX_DEFAULT_MODEL}
               onChange={(e) => updateDraft({ model: e.target.value })}
             />
           </label>
@@ -1913,7 +2034,7 @@ function AgentConfigCard({
               placeholder={
                 tool === "claude"
                   ? '{\n  "env": {\n    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",\n    "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash"\n  }\n}'
-                  : 'model_provider = "xuya_custom_new-api"\nmodel = "gpt-5-codex"\nmodel_reasoning_effort = "high"\ndisable_response_storage = true\n\n[model_providers.xuya_custom_new-api]\nname = "new-api"\nbase_url = "https://api.example.com/v1"\nwire_api = "responses"\nexperimental_bearer_token = "${CODEX_API_KEY}"'
+                  : `model_provider = "xuya_custom_new-api"\nmodel = "${CODEX_DEFAULT_MODEL}"\nmodel_reasoning_effort = "high"\ndisable_response_storage = true\n\n[model_providers.xuya_custom_new-api]\nname = "new-api"\nbase_url = "https://api.example.com/v1"\nwire_api = "responses"\nexperimental_bearer_token = "${CODEX_TOKEN_PLACEHOLDER}"`
               }
               onChange={(e) =>
                 updateDraft(
@@ -1936,6 +2057,22 @@ function AgentConfigCard({
           </span>
         </div>
         <div className="xy-agent-actions">
+          <button
+            className="xy-mini-btn"
+            type="button"
+            disabled={reading || saving || applying}
+            onClick={() => {
+              setActiveDetail("config");
+              onLoadCurrent();
+            }}
+          >
+            {reading ? (
+              <Loader2 className="xy-spin" size={13} strokeWidth={1.8} />
+            ) : (
+              <RefreshCw size={13} strokeWidth={1.8} />
+            )}
+            读取当前
+          </button>
           {usesCustom && (
             <button
               className="xy-mini-btn"

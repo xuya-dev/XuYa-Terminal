@@ -21,6 +21,7 @@ const XUYA_CODEX_EXTRA_BEGIN: &str = "# XuYa custom config begin";
 const XUYA_CODEX_EXTRA_END: &str = "# XuYa custom config end";
 const CLAUDE_TOKEN_PLACEHOLDER: &str = "${ANTHROPIC_AUTH_TOKEN}";
 const CODEX_TOKEN_PLACEHOLDER: &str = "${CODEX_API_KEY}";
+const CODEX_DEFAULT_MODEL: &str = "gpt-5.5";
 const MODEL_FETCH_TIMEOUT_SECS: u64 = 15;
 const MODEL_FETCH_ERROR_BODY_MAX_CHARS: usize = 512;
 
@@ -419,8 +420,10 @@ fn save_agent_custom_provider_inner(
     });
     let existing_api_key = existing_index
         .and_then(|index| clean_optional_text(Some(store.providers[index].api_key.as_str())));
+    let current_config_api_key = current_agent_api_key(&home, tool, requested_id.as_deref());
     let api_key = clean_optional_text(request.api_key.as_deref())
         .or(existing_api_key)
+        .or(current_config_api_key)
         .ok_or_else(|| "API Key is required for custom providers".to_string())?;
     let model = normalize_agent_model(tool, request.model.as_deref());
     let haiku_model = normalize_claude_role_model(tool, request.haiku_model.as_deref());
@@ -701,7 +704,7 @@ fn apply_codex_provider_config(
                 .as_ref()
                 .and_then(|provider| provider.model.clone())
         })
-        .unwrap_or_else(|| "gpt-5-codex".to_string());
+        .unwrap_or_else(|| CODEX_DEFAULT_MODEL.to_string());
     let codex_provider_id = custom_id
         .as_deref()
         .map(codex_custom_provider_id)
@@ -755,7 +758,9 @@ fn apply_codex_provider_config(
         merge_codex_config(generated_config, String::new(), preserved)
     });
     if let Some(api_key) = api_key {
-        next = set_codex_provider_token(&next, &codex_provider_id, &api_key);
+        let token_provider_id =
+            extract_top_level_toml_string(&next, "model_provider").unwrap_or(codex_provider_id);
+        next = set_codex_provider_token(&next, &token_provider_id, &api_key);
     }
     if !next.ends_with('\n') {
         next.push('\n');
@@ -1217,7 +1222,7 @@ fn normalize_agent_base_url(tool: &str, value: &str) -> Result<String, String> {
 fn normalize_agent_model(tool: &str, model: Option<&str>) -> Option<String> {
     clean_optional_text(model).or_else(|| {
         if tool == "codex" {
-            Some("gpt-5-codex".to_string())
+            Some(CODEX_DEFAULT_MODEL.to_string())
         } else {
             None
         }
