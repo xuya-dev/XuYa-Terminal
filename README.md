@@ -3,7 +3,7 @@
 > 面向 AI Agent 工作流的原生终端工作台。
 > 基于 Tauri v2、React 19、TypeScript 与 Rust 构建，重点优化 Windows PTY、中文界面、AI 编程会话和代理商配置体验。
 
-当前版本：`0.1.7`
+当前版本：`0.1.8`
 
 ## 项目状态
 
@@ -246,7 +246,7 @@ cargo fmt
 版本号通过脚本统一更新：
 
 ```bash
-pnpm run version:set -- 0.1.7
+pnpm run version:set -- 0.1.8
 ```
 
 该命令会同步更新：
@@ -262,8 +262,8 @@ pnpm run version:set -- 0.1.7
 版本标签使用 `v*` 格式，例如：
 
 ```bash
-git tag v0.1.7
-git push origin v0.1.7
+git tag v0.1.8
+git push origin v0.1.8
 ```
 
 推送 `v*` 标签会触发 GitHub Actions 发布流程，自动构建 Windows 安装包并生成 updater 所需的发布文件。更多细节见 [docs/auto-update.md](docs/auto-update.md)。
