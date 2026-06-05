@@ -1,8 +1,28 @@
-# 更新日志 (Changelog)
+﻿# 更新日志 (Changelog)
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [0.1.6] - 2026-06-05
+
+### ⚡ 终端渲染与性能 (Terminal Rendering & Performance)
+- 接入 WebGL 渲染器，大幅提升 Claude Code / Codex 等高吞吐流式输出与长 diff 滚动的流畅度；GPU 上下文丢失时自动降级回 DOM 渲染器。
+- 启用 Unicode 11 字符宽度，框线、CJK 与 Emoji 列宽从首帧起即正确对齐，修复 Agent TUI 错位问题。
+- PTY 输出改用二进制 IPC 通道（`tauri::ipc::Channel`）传输原始字节，取代旧的 emit/listen + JSON 数字数组，消除逐字节序列化开销。
+- 优化 PTY 读取线程的合并逻辑，每轮循环即时回吐缓冲，避免背压缓解后小段尾包滞留。
+
+### 🎨 字体与配色 (Font & Color)
+- 终端默认字体改为内置分发的 JetBrains Maple Mono（随应用打包 Regular / Bold，无需用户手动安装），保证中英文严格等宽对齐。
+- 关闭 `minimumContrastRatio` 强制对比度改写，还原 Agent 精心设计的真彩色语法高亮。
+
+### 🔍 终端内搜索 (Terminal Search)
+- 新增 `Ctrl+F` 终端内搜索浮层：支持回车 / Shift+回车 切换下一个 / 上一个、大小写切换、结果计数，Esc 关闭并归还焦点。
+- 屏蔽 WebView 自带的页面查找栏，并在右键菜单新增"搜索"项（选中单行文本时自动填入）。
+
+### ⚙️ 启动体验 (Startup)
+- 削减各 Shell 启动时的等待延迟：PowerShell 由 500ms 降至 250ms，Git Bash / WSL 由 1s 降至 0.3s，CMD 移除多余的 1s 等待，新建会话与一键启动 Agent 更快。
+
 ## [0.1.5] - 2026-06-04
+ - 2026-06-04
 
 ### ✨ AI 代理商与额度查询 (AI Providers & Quota)
 - 底部状态栏新增 Claude Code / Codex 代理商切换器，仅在对应 Agent 会话中展示，并按当前工具过滤可用代理商。

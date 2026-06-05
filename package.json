@@ -1,7 +1,7 @@
 {
   "name": "xuya-terminal",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,7 +18,10 @@
     "@tauri-apps/plugin-shell": "^2",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@xterm/addon-fit": "^0.10",
+    "@xterm/addon-search": "0.15.0",
+    "@xterm/addon-unicode11": "0.8.0",
     "@xterm/addon-web-links": "^0.11",
+    "@xterm/addon-webgl": "0.18.0",
     "@xterm/xterm": "^5",
     "dockview-react": "^6.6.1",
     "lucide-react": "^0.460.0",
