@@ -1,0 +1,21 @@
+/* JetBrains Maple Mono — bundled so every install gets identical CJK-aligned
+ * terminal rendering, not just machines that happen to have it installed.
+ * OFL-1.1 licensed (redistribution permitted). Full glyph set incl. CJK, so
+ * the files are large and intentionally NOT subset (the terminal must render
+ * arbitrary characters). Regular + Bold only. */
+
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./JetBrainsMapleMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./JetBrainsMapleMono-Bold.woff2") format("woff2");
+}

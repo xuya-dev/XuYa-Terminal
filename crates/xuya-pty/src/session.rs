@@ -192,23 +192,25 @@ fn reader_loop(
                         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => break,
                     }
                 } else {
-                    // Already coalescing — append.
+                    // Already coalescing — append, then try to flush every
+                    // iteration. The previous code only flushed once overflow
+                    // reached 8 KiB, so a small tail packet could linger
+                    // unsent until the next (blocking) read returned — e.g.
+                    // when an agent prints a short line then waits for input.
                     overflow.extend_from_slice(data);
 
-                    // Try to flush the overflow buffer.
-                    if overflow.len() >= 8192 {
-                        match tx.try_send(PtyChunk::Data {
-                            data: overflow.clone(),
-                        }) {
-                            Ok(()) => overflow.clear(),
-                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                // Keep coalescing — cap at 1MB to prevent OOM.
-                                if overflow.len() > 1024 * 1024 {
-                                    overflow.drain(..8192);
-                                }
+                    match tx.try_send(PtyChunk::Data {
+                        data: overflow.clone(),
+                    }) {
+                        Ok(()) => overflow.clear(),
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                            // Still backed up — keep coalescing, capped at 1 MiB
+                            // to prevent unbounded growth (OOM).
+                            if overflow.len() > 1024 * 1024 {
+                                overflow.drain(..8192);
                             }
-                            Err(_) => break,
                         }
+                        Err(_) => break,
                     }
                 }
             }

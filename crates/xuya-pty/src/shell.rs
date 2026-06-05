@@ -62,8 +62,11 @@ pub fn resolve_command(kind: &ShellKind, startup_command: Option<&str>) -> Resul
             let exe = find_executable("cmd.exe").context("cmd.exe not found")?;
             let mut cmd = CommandBuilder::new(exe);
             if let Some(command) = startup_command {
+                // cmd.exe has no profile/rc to wait on and /K runs the command
+                // itself (no PTY-injection race), so no startup delay is needed
+                // — the old `timeout /t 1` was a gratuitous 1s stall.
                 cmd.arg("/K");
-                cmd.arg(format!("timeout /t 1 /nobreak >nul & {command}"));
+                cmd.arg(command.to_string());
             }
             Ok(cmd)
         }
@@ -77,7 +80,8 @@ pub fn resolve_command(kind: &ShellKind, startup_command: Option<&str>) -> Resul
                 cmd.arg("--exec");
                 cmd.arg("sh");
                 cmd.arg("-lc");
-                cmd.arg(format!("sleep 1; {command}; exec sh"));
+                // Brief settle for the login profile. Was `sleep 1`.
+                cmd.arg(format!("sleep 0.3; {command}; exec sh"));
             }
             Ok(cmd)
         }
@@ -100,7 +104,9 @@ pub fn resolve_command(kind: &ShellKind, startup_command: Option<&str>) -> Resul
             cmd.arg("-i");
             if let Some(command) = startup_command {
                 cmd.arg("-c");
-                cmd.arg(format!("sleep 1; {command}; exec bash --login -i"));
+                // Brief settle for the login profile, then hand off to an
+                // interactive shell. Was `sleep 1`.
+                cmd.arg(format!("sleep 0.3; {command}; exec bash --login -i"));
             }
             Ok(cmd)
         }
@@ -124,7 +130,10 @@ pub fn resolve_launch_command(command_line: &str) -> Result<CommandBuilder> {
 }
 
 fn delayed_powershell_command(command: &str) -> String {
-    format!("Start-Sleep -Milliseconds 500; & {command}")
+    // Brief settle so the user's PowerShell profile finishes loading before the
+    // agent banner prints (otherwise their output interleaves). 250ms is enough
+    // for typical profiles; was 500ms.
+    format!("Start-Sleep -Milliseconds 250; & {command}")
 }
 
 fn resolve_executable(value: &str) -> Result<PathBuf> {

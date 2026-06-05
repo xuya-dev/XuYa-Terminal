@@ -1,9 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { SearchAddon } from "@xterm/addon-search";
 import { useEffect, useRef, useCallback, useState } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { useThemeStore } from "../stores/themeStore";
@@ -24,6 +26,12 @@ import {
   parseAgentCommand,
 } from "../lib/agentCommand";
 import ContextMenu, { type MenuEntry } from "./ContextMenu";
+import {
+  CaseSensitive,
+  ChevronDown,
+  ChevronUp,
+  X,
+} from "lucide-react";
 
 interface TerminalViewParams {
   shellKind: ShellKind;
@@ -83,6 +91,7 @@ export default function TerminalView(
   const terminalHostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const agentCommandRef = useRef<string | undefined>(props.params?.agentCommand);
   const terminalOpenRef = useRef(false);
@@ -106,6 +115,14 @@ export default function TerminalView(
     agentCommand ? `正在启动 ${label}` : "",
   );
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
+  const [searchResult, setSearchResult] = useState<{
+    index: number;
+    count: number;
+  }>({ index: -1, count: 0 });
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const palette = useThemeStore((s) => s.palette);
   const zoom = useSettingsStore((s) => s.zoom);
@@ -221,7 +238,11 @@ export default function TerminalView(
       fontSize: zoomToFontSize(zoom),
       lineHeight: 1.2,
       fontFamily:
-        "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
+        "'JetBrains Maple Mono', 'Cascadia Mono', 'Cascadia Code', Consolas, monospace",
+      // Ligatures stay off: xterm renders glyph-by-glyph and only forms
+      // ligatures with the (unused) ligatures addon, so Maple Mono's built-in
+      // ligatures never trigger. This keeps cell/cursor column alignment exact
+      // for agent TUIs (Claude Code / Codex).
       theme: palette.terminal,
       cursorBlink,
       cursorStyle,
@@ -229,7 +250,9 @@ export default function TerminalView(
       allowProposedApi: true,
       allowTransparency: false,
       drawBoldTextInBrightColors: true,
-      minimumContrastRatio: 4.5,
+      // 1 = no contrast rewriting. Agents (Claude Code / Codex) ship carefully
+      // tuned truecolor syntax highlighting; forcing a 4.5 ratio washed it out.
+      minimumContrastRatio: 1,
     });
 
     // Let the browser raise paste events for terminal text/image paste.
@@ -246,6 +269,23 @@ export default function TerminalView(
         if (sid) {
           invoke("pty_write", { id: sid, data: ALT_V }).catch(() => {});
         }
+        return false;
+      }
+
+      // Ctrl+F opens the search overlay. This intentionally overrides the
+      // readline forward-char binding in agent CLIs (Claude Code / Codex /
+      // OpenCode) — per user preference, Ctrl+F always means "find".
+      const isFind =
+        e.type === "keydown" &&
+        e.ctrlKey &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key?.toLowerCase() === "f" || e.code === "KeyF");
+      if (isFind) {
+        // xterm returning false only stops PTY dispatch — it does NOT stop the
+        // WebView's native Ctrl+F find bar. preventDefault suppresses it.
+        e.preventDefault();
+        setSearchOpen(true);
         return false;
       }
 
@@ -276,19 +316,27 @@ export default function TerminalView(
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
+    // Unicode 11 widths must be active before any PTY output is written so
+    // CJK / box-drawing / emoji columns line up (Claude Code & Codex TUIs).
+    term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = "11";
+    const searchAddon = new SearchAddon();
+    term.loadAddon(searchAddon);
     termRef.current = term;
     fitAddonRef.current = fitAddon;
+    searchAddonRef.current = searchAddon;
     REGISTRY.set(props.api.id, term);
 
     let id = "";
     let dataDisposable: { dispose: () => void } | null = null;
-    let unlisten: (() => void) | null = null;
+    let channelGeneration = 0;
     let sessionLookupTimer: ReturnType<typeof setTimeout> | null = null;
     let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
     let agentReadyTimer: ReturnType<typeof setTimeout> | null = null;
     let agentSlowTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
     let isOpen = false;
+    let disposeWebgl: (() => void) | null = null;
     let restartingAgent = false;
     let suppressExitUntil = 0;
     let agentLaunchSettled = !props.params?.agentCommand;
@@ -382,6 +430,7 @@ export default function TerminalView(
         term.open(el);
         isOpen = true;
         terminalOpenRef.current = true;
+        disposeWebgl = attachWebglRenderer(term);
         safeFit();
         hideCodexCursor(true);
         resolveOpenWaiters();
@@ -486,17 +535,20 @@ export default function TerminalView(
       }, attempt === 0 ? 1500 : 3000);
     };
 
-    const handlePtyChunk = (event: {
-      payload: {
-        type: string;
-        data?: number[];
-        code?: number;
-      };
-    }) => {
-      if (disposed) return;
-      const p = event.payload;
-      if (p.type === "Data" && p.data) {
-        const bytes = new Uint8Array(p.data);
+    // Binary IPC frames: first byte is the marker (0x00 Data / 0x01 Exit).
+    // Data carries raw PTY bytes after the marker; Exit carries
+    // [has_code, i32_le×4]. Channel delivers these as ArrayBuffer.
+    const FRAME_DATA = 0x00;
+    const FRAME_EXIT = 0x01;
+
+    const handlePtyChunk = (generation: number, message: ArrayBuffer) => {
+      if (disposed || generation !== channelGeneration) return;
+      const frame = new Uint8Array(message);
+      if (frame.length === 0) return;
+      const marker = frame[0];
+
+      if (marker === FRAME_DATA) {
+        const bytes = frame.subarray(1);
         if (!agentLaunchSettled) {
           agentStartupOutput = (
             agentStartupOutput + agentOutputDecoder.decode(bytes, { stream: true })
@@ -508,19 +560,27 @@ export default function TerminalView(
         }
         hideCodexCursor();
         term.write(bytes);
-      } else if (p.type === "Exit") {
+      } else if (marker === FRAME_EXIT) {
+        const hasCode = frame[1] === 1;
+        const code = hasCode
+          ? new DataView(
+              frame.buffer,
+              frame.byteOffset + 2,
+              4,
+            ).getInt32(0, true)
+          : null;
         if (Date.now() < suppressExitUntil) {
           suppressExitUntil = 0;
           return;
         }
         term.writeln(
           `\r\n\x1b[90m[Process exited${
-            p.code != null ? ` code ${p.code}` : ""
+            code != null ? ` code ${code}` : ""
           }]\x1b[0m`,
         );
         updateSession(props.api.id, {
           status: "exited",
-          exitCode: p.code ?? undefined,
+          exitCode: code ?? undefined,
         });
         if (!agentLaunchSettled) {
           markAgentFailed(`${label} 启动失败`);
@@ -528,30 +588,23 @@ export default function TerminalView(
       }
     };
 
-    const ensurePtyListener = async (): Promise<boolean> => {
-      if (unlisten) return true;
-      unlisten = await listen<{
-        type: string;
-        data?: number[];
-        code?: number;
-      }>(`pty-chunk-${ptyId}`, handlePtyChunk);
-      if (!disposed) return true;
-      unlisten();
-      unlisten = null;
-      return false;
+    const ensurePtyChannel = (): Channel<ArrayBuffer> => {
+      // Bump the generation so any in-flight messages from a previous channel
+      // (e.g. after an agent restart) are ignored by the handler.
+      channelGeneration += 1;
+      const generation = channelGeneration;
+      const next = new Channel<ArrayBuffer>();
+      next.onmessage = (message) => handlePtyChunk(generation, message);
+      return next;
     };
 
     const openPty = async (
       startupCommand: string | null | undefined,
     ): Promise<number | undefined> => {
       const commandStartedAt = Date.now();
-      if (unlisten) {
-        unlisten();
-        unlisten = null;
-      }
       ptyId = createPtyId();
-      const listening = await ensurePtyListener();
-      if (!listening || disposed) return undefined;
+      const onChunk = ensurePtyChannel();
+      if (disposed) return undefined;
 
       try {
         lastTerminalSizeRef.current = { rows: term.rows, cols: term.cols };
@@ -565,6 +618,7 @@ export default function TerminalView(
             launchCommand: props.params?.launchCommand ?? null,
             startupCommand,
           },
+          onChunk,
         });
       } catch (err) {
         if (disposed) return undefined;
@@ -695,10 +749,9 @@ export default function TerminalView(
         if (id) {
           const previousId = id;
           suppressExitUntil = Date.now() + 3000;
-          if (unlisten) {
-            unlisten();
-            unlisten = null;
-          }
+          // Detach the old PTY's channel: bump the generation so any trailing
+          // messages from the dying PTY are ignored by the handler.
+          channelGeneration += 1;
           id = "";
           sessionIdRef.current = null;
           await invoke("pty_close", { id: previousId }).catch(() => {});
@@ -737,14 +790,20 @@ export default function TerminalView(
       if (sessionLookupTimer) clearTimeout(sessionLookupTimer);
       if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       dataDisposable?.dispose();
-      unlisten?.();
+      // Bump the generation so the channel handler ignores any trailing
+      // messages while the terminal tears down (`disposed` also gates it).
+      channelGeneration += 1;
       if (id) invoke("pty_close", { id }).catch(() => {});
+      // Dispose WebGL before the terminal so its safe-dispose guard runs
+      // while the terminal core is still intact.
+      disposeWebgl?.();
       term.dispose();
       REGISTRY.delete(props.api.id);
       RESTART_REGISTRY.delete(props.api.id);
       removeSession(props.api.id);
       termRef.current = null;
       fitAddonRef.current = null;
+      searchAddonRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1026,6 +1085,70 @@ export default function TerminalView(
     else zoomOut();
   }, []);
 
+  // ── Terminal search (Ctrl+Shift+F) ──────────────────────────────────────
+  const buildSearchOptions = useCallback(() => {
+    const t = useThemeStore.getState().palette.terminal;
+    return {
+      caseSensitive: searchCaseSensitive,
+      decorations: {
+        matchBackground: t.yellow,
+        matchOverviewRuler: t.yellow,
+        activeMatchBackground: t.brightYellow,
+        activeMatchColorOverviewRuler: t.brightYellow,
+      },
+    };
+  }, [searchCaseSensitive]);
+
+  const runFind = useCallback(
+    (direction: "next" | "prev", query: string) => {
+      const search = searchAddonRef.current;
+      if (!search) return;
+      const options = buildSearchOptions();
+      if (!query) {
+        search.clearDecorations();
+        setSearchResult({ index: -1, count: 0 });
+        return;
+      }
+      if (direction === "next") search.findNext(query, options);
+      else search.findPrevious(query, options);
+    },
+    [buildSearchOptions],
+  );
+
+  // Subscribe to result-count changes for the "n / total" readout.
+  useEffect(() => {
+    const search = searchAddonRef.current;
+    if (!search) return;
+    const dispose = search.onDidChangeResults(({ resultIndex, resultCount }) => {
+      setSearchResult({ index: resultIndex, count: resultCount });
+    });
+    return () => dispose.dispose();
+  }, []);
+
+  // Focus the input when the overlay opens; clear highlights when it closes.
+  useEffect(() => {
+    if (searchOpen) {
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+      if (searchQuery) runFind("next", searchQuery);
+    } else {
+      searchAddonRef.current?.clearDecorations();
+      setSearchResult({ index: -1, count: 0 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchOpen]);
+
+  // Re-run search when the query or case-sensitivity changes while open.
+  useEffect(() => {
+    if (!searchOpen) return;
+    runFind("next", searchQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, searchCaseSensitive]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    requestAnimationFrame(() => termRef.current?.focus());
+  }, []);
+
   const term = termRef.current;
   const hasSel = term ? term.hasSelection() : false;
 
@@ -1059,6 +1182,19 @@ export default function TerminalView(
         } catch (err) {
           console.error("Clipboard paste failed:", err);
         }
+      },
+    },
+    "separator",
+    {
+      id: "search",
+      label: "搜索 (Ctrl+F)",
+      onClick: () => {
+        if (term?.hasSelection()) {
+          const sel = term.getSelection();
+          // Only seed single-line selections; multi-line makes a poor query.
+          if (sel && !sel.includes("\n")) setSearchQuery(sel);
+        }
+        setSearchOpen(true);
       },
     },
     "separator",
@@ -1110,6 +1246,74 @@ export default function TerminalView(
           <span>{agentLaunchMessage}</span>
         </div>
       )}
+      {searchOpen && (
+        <div className="xy-term-search" onClick={(e) => e.stopPropagation()}>
+          <input
+            ref={searchInputRef}
+            className="xy-term-search-input"
+            type="text"
+            placeholder="搜索终端…"
+            value={searchQuery}
+            spellCheck={false}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                runFind(e.shiftKey ? "prev" : "next", searchQuery);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                closeSearch();
+              } else if (
+                e.ctrlKey &&
+                !e.shiftKey &&
+                !e.altKey &&
+                e.key.toLowerCase() === "f"
+              ) {
+                // Suppress the WebView find bar when the box already has focus.
+                e.preventDefault();
+                e.currentTarget.select();
+              }
+            }}
+          />
+          <span className="xy-term-search-count">
+            {searchResult.count > 0
+              ? `${searchResult.index + 1}/${searchResult.count}`
+              : searchQuery
+                ? "无结果"
+                : ""}
+          </span>
+          <button
+            className={`xy-term-search-btn${searchCaseSensitive ? " is-active" : ""}`}
+            title="区分大小写"
+            onClick={() => setSearchCaseSensitive((v) => !v)}
+          >
+            <CaseSensitive size={15} />
+          </button>
+          <button
+            className="xy-term-search-btn"
+            title="上一个 (Shift+Enter)"
+            disabled={searchResult.count === 0}
+            onClick={() => runFind("prev", searchQuery)}
+          >
+            <ChevronUp size={15} />
+          </button>
+          <button
+            className="xy-term-search-btn"
+            title="下一个 (Enter)"
+            disabled={searchResult.count === 0}
+            onClick={() => runFind("next", searchQuery)}
+          >
+            <ChevronDown size={15} />
+          </button>
+          <button
+            className="xy-term-search-btn"
+            title="关闭 (Esc)"
+            onClick={closeSearch}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
       {menu && (
         <ContextMenu
           x={menu.x}
@@ -1130,6 +1334,52 @@ function hasRenderableSize(el: HTMLElement | null): el is HTMLElement {
 
 function nextAnimationFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+/**
+ * Attach the WebGL renderer after the terminal DOM is mounted. xterm's
+ * default renderer is the DOM one (slowest); WebGL keeps high-throughput
+ * agent output (Claude Code / Codex streaming, big diffs) smooth.
+ *
+ * Returns a disposer that must run *before* `term.dispose()`. WebglAddon
+ * throws `Cannot read properties of undefined (reading '_isDisposed')` if it
+ * is disposed before it has rendered a frame — which happens under React
+ * StrictMode's mount/unmount/mount cycle and when Dockview tears a panel down
+ * immediately. We guard every dispose path so that crash can never bubble.
+ *
+ * On GPU context loss (driver reset, some backgrounded-tab GPUs) the addon is
+ * disposed so xterm transparently falls back to the DOM renderer. Construction
+ * failure (no WebGL2 in this WebView2) is swallowed for the same fallback.
+ */
+function attachWebglRenderer(term: Terminal): () => void {
+  let addon: WebglAddon;
+  try {
+    addon = new WebglAddon();
+  } catch {
+    return () => {}; // No WebGL2 available — stay on the DOM renderer.
+  }
+
+  let disposed = false;
+  const safeDispose = (): void => {
+    if (disposed) return;
+    disposed = true;
+    try {
+      addon.dispose();
+    } catch {
+      // WebglAddon can throw if disposed before its first render; the
+      // renderer is being torn down anyway, so swallow it.
+    }
+  };
+
+  addon.onContextLoss(safeDispose);
+
+  try {
+    term.loadAddon(addon);
+  } catch {
+    safeDispose();
+  }
+
+  return safeDispose;
 }
 
 function fitTerminal(

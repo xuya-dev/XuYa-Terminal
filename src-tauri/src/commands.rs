@@ -10,7 +10,8 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use tauri::ipc::Channel;
+use tauri::State;
 use tokio::sync::mpsc;
 use xuya_core::{PtyChunk, SessionSpec};
 use xuya_pty::PtySession;
@@ -349,10 +350,15 @@ struct ModelEntry {
 }
 
 /// Open a new PTY session. Returns the session ID.
+///
+/// PTY output is streamed to the frontend over a binary [`Channel`] as
+/// length-tagged byte frames (see [`PtyChunk::encode`]). This replaces the old
+/// `emit`/`listen` JSON path, which serialized every byte as a decimal number
+/// in a JSON array (2–4× inflation plus serialize/parse on the hot path).
 #[tauri::command]
 pub async fn pty_open(
     spec: SessionSpec,
-    app: AppHandle,
+    on_chunk: Channel<Vec<u8>>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let (tx, mut rx) = mpsc::channel::<PtyChunk>(256);
@@ -376,10 +382,7 @@ pub async fn pty_open(
     let sessions = state.sessions.clone();
     tokio::spawn(async move {
         while let Some(chunk) = rx.recv().await {
-            if app
-                .emit(&format!("pty-chunk-{session_id}"), &chunk)
-                .is_err()
-            {
+            if on_chunk.send(chunk.encode()).is_err() {
                 break;
             }
         }

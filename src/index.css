@@ -66,7 +66,7 @@ body,
     "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue",
     Arial, sans-serif;
   --xy-font-mono:
-    "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+    "JetBrains Maple Mono", "Cascadia Mono", "Cascadia Code", Consolas, monospace;
 }
 
 /* ── Root layout — vertical stack: topbar / body / statusbar ────────────── */
@@ -1609,6 +1609,90 @@ body,
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ── Terminal search overlay (Ctrl+Shift+F) ─────────────────────────────── */
+
+.xy-term-search {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--xy-surface) 96%, transparent),
+      color-mix(in srgb, var(--xy-surface-panel) 97%, transparent)
+    );
+  border: 1px solid color-mix(in srgb, var(--xy-border) 82%, var(--xy-accent) 18%);
+  border-radius: var(--xy-radius-md);
+  box-shadow: var(--xy-shadow-menu);
+  animation: xy-pop 0.12s ease-out;
+}
+
+.xy-term-search-input {
+  width: 180px;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--xy-surface-sunken);
+  border: 1px solid var(--xy-border);
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg);
+  font-family: var(--xy-font-ui);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.xy-term-search-input:focus {
+  border-color: var(--xy-accent);
+  box-shadow: 0 0 0 2px var(--xy-accent-soft);
+}
+
+.xy-term-search-count {
+  min-width: 44px;
+  padding: 0 4px;
+  color: var(--xy-fg-faint);
+  font-family: var(--xy-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.xy-term-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  border-radius: var(--xy-radius-sm);
+  color: var(--xy-fg-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.xy-term-search-btn:hover {
+  background: var(--xy-surface-hover);
+  color: var(--xy-fg);
+}
+
+.xy-term-search-btn.is-active {
+  background: var(--xy-accent-soft);
+  color: var(--xy-accent-soft-fg);
+}
+
+.xy-term-search-btn:disabled,
+.xy-term-search-btn:disabled:hover {
+  cursor: default;
+  background: transparent;
+  color: var(--xy-fg-faint);
+  opacity: 0.5;
 }
 
 .xterm .xterm-viewport {
