@@ -1,5 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-shell";
 import {
@@ -69,7 +70,6 @@ const CURSOR_OPTIONS: { value: CursorStyle; label: string }[] = [
 ];
 
 const PROJECT_REPOSITORY_URL = "https://github.com/xuya-dev/XuYa-Terminal";
-const APP_VERSION = "0.1.4";
 
 type UpdateStatus =
   | "idle"
@@ -3543,10 +3543,26 @@ function SessionMenuEditor({
 
 function AboutModal() {
   const closeModal = useModalStore((s) => s.closeModal);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const openRepository = useCallback(() => {
     void open(PROJECT_REPOSITORY_URL).catch((error) => {
       console.error("[AboutModal] Failed to open repository:", error);
     });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getVersion()
+      .then((version) => {
+        if (!cancelled) setAppVersion(version);
+      })
+      .catch((error) => {
+        console.error("[AboutModal] Failed to read app version:", error);
+        if (!cancelled) setAppVersion("开发版");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -3561,7 +3577,7 @@ function AboutModal() {
             <div className="xy-about-tag">面向 AI Agent 工程师的终端管理器</div>
           </div>
           <div className="xy-about-meta">
-            <span>版本 {APP_VERSION}</span>
+            <span>版本 {appVersion ?? "读取中"}</span>
             <span>Tauri v2</span>
             <span>React 19</span>
           </div>
