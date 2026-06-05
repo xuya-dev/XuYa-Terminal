@@ -854,14 +854,6 @@ body,
   white-space: nowrap;
 }
 
-.xy-status-uptime {
-  display: inline-block;
-  width: 8ch;
-  font-family: var(--xy-font-mono);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-}
-
 .xy-status-chip[data-tone="running"] svg {
   color: var(--xy-success);
 }
@@ -1229,22 +1221,6 @@ body,
   align-items: center;
   gap: 4px;
   color: var(--xy-fg-muted);
-}
-
-.xy-status-clock {
-  display: inline-flex;
-  width: 76px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  color: var(--xy-fg-muted);
-  font-family: var(--xy-font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.xy-status-clock svg {
-  color: var(--xy-accent);
 }
 
 .xy-status-pill::before {
@@ -1735,6 +1711,25 @@ body,
 .xterm {
   padding: 0;
   height: 100%;
+}
+
+/* Agent TUIs (Claude Code / Codex / OpenCode) move the logical cursor around
+   while repainting. xterm anchors its hidden input box (.xterm-helper-textarea
+   — the element the OS IME candidate window attaches to) to that cursor, so the
+   input method would otherwise get dragged across the screen. Pin the anchor
+   (and the composition view) to the bottom-left input area so the IME stays put.
+   Plain shells lack .is-agent and keep xterm's native cursor-following IME. */
+.xy-terminal-host.is-agent .xterm-helpers {
+  inset: 0; /* stretch the 0-height anchor over the screen so bottom resolves */
+  pointer-events: none; /* never intercept the terminal's selection/clicks */
+}
+
+.xy-terminal-host.is-agent .xterm-helper-textarea,
+.xy-terminal-host.is-agent .composition-view {
+  /* !important overrides the inline top/left xterm writes in _syncTextArea(). */
+  top: auto !important;
+  bottom: 4px !important;
+  left: 8px !important;
 }
 
 .xy-agent-launch {

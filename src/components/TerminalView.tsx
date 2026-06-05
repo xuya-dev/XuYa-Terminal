@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
+import type { ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -100,14 +101,16 @@ export default function TerminalView(
   const agentCommandRef = useRef<string | undefined>(props.params?.agentCommand);
   const terminalOpenRef = useRef(false);
   const lastTerminalSizeRef = useRef<{ rows: number; cols: number } | null>(null);
-  const outputCursorRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const outputCursorHiddenRef = useRef(false);
-  const codexCursorVisibleUntilRef = useRef(0);
 
   const shellKind = (props.params?.shellKind ?? "powerShell") as ShellKind;
   const cwd = props.params?.cwd;
   const agentCommand = props.params?.agentCommand;
   agentCommandRef.current = agentCommand;
+  // Agent TUIs (Claude Code / Codex / OpenCode) repaint the whole screen while
+  // streaming, dragging xterm's caret around the screen ("乱窜") and pulling the
+  // IME composition box with it. They render their own input highlight, so we
+  // keep xterm's caret hidden for them throughout. Fixed for the panel's life.
+  const isAgent = isCursorManagedAgent(agentCommand);
   const label =
     props.params?.label ??
     (agentCommand
@@ -137,49 +140,6 @@ export default function TerminalView(
   const updateSession = useSessionStore((s) => s.update);
   const removeSession = useSessionStore((s) => s.remove);
   const setActive = useSessionStore((s) => s.setActive);
-
-  const hideCodexCursor = useCallback((force = false) => {
-    const term = termRef.current;
-    if (!term || agentCommandRef.current !== "codex") return;
-    if (!force && Date.now() < codexCursorVisibleUntilRef.current) return;
-
-    if (outputCursorRestoreTimerRef.current) {
-      clearTimeout(outputCursorRestoreTimerRef.current);
-      outputCursorRestoreTimerRef.current = null;
-    }
-
-    codexCursorVisibleUntilRef.current = 0;
-    if (outputCursorHiddenRef.current) return;
-
-    outputCursorHiddenRef.current = true;
-    const terminalPalette = useThemeStore.getState().palette.terminal;
-    term.options.cursorBlink = false;
-    term.options.theme = {
-      ...terminalPalette,
-      cursor: "transparent",
-      cursorAccent: "transparent",
-    };
-  }, []);
-
-  const showCodexInputCursorBriefly = useCallback(() => {
-    const term = termRef.current;
-    if (!term || agentCommandRef.current !== "codex") return;
-
-    if (outputCursorRestoreTimerRef.current) {
-      clearTimeout(outputCursorRestoreTimerRef.current);
-      outputCursorRestoreTimerRef.current = null;
-    }
-
-    codexCursorVisibleUntilRef.current = Date.now() + 1200;
-    outputCursorHiddenRef.current = false;
-    term.options.theme = useThemeStore.getState().palette.terminal;
-    term.options.cursorBlink = useSettingsStore.getState().cursorBlink;
-
-    outputCursorRestoreTimerRef.current = setTimeout(() => {
-      outputCursorRestoreTimerRef.current = null;
-      hideCodexCursor(true);
-    }, 1200);
-  }, [hideCodexCursor]);
 
   const resizePtyIfNeeded = useCallback((term: Terminal) => {
     const size = { rows: term.rows, cols: term.cols };
@@ -248,9 +208,14 @@ export default function TerminalView(
       // ligatures with the (unused) ligatures addon, so Maple Mono's built-in
       // ligatures never trigger. This keeps cell/cursor column alignment exact
       // for agent TUIs (Claude Code / Codex).
-      theme: palette.terminal,
-      cursorBlink,
+      // Agent TUIs draw their own input highlight; we hide xterm's caret for
+      // them (transparent theme + no blink) so their full-screen repaints can't
+      // drag it across the screen. cursorInactiveStyle "none" also kills the
+      // unfocused outline caret, which the transparent theme color can't reach.
+      theme: isAgent ? hiddenCursorTheme(palette.terminal) : palette.terminal,
+      cursorBlink: isAgent ? false : cursorBlink,
       cursorStyle,
+      cursorInactiveStyle: isAgent ? "none" : "outline",
       scrollback: 10000,
       allowProposedApi: true,
       allowTransparency: false,
@@ -437,7 +402,6 @@ export default function TerminalView(
         terminalOpenRef.current = true;
         disposeWebgl = attachWebglRenderer(term);
         safeFit();
-        hideCodexCursor(true);
         resolveOpenWaiters();
       } catch {
         // xterm can fail while Dockview is still settling panel dimensions.
@@ -564,7 +528,6 @@ export default function TerminalView(
           }
           scheduleAgentReady();
         }
-        hideCodexCursor();
         term.write(bytes);
       } else if (marker === FRAME_EXIT) {
         const hasCode = frame[1] === 1;
@@ -643,13 +606,6 @@ export default function TerminalView(
     const wireTerminalInput = (): void => {
       if (dataDisposable) return;
       dataDisposable = term.onData((data) => {
-        if (agentCommandRef.current === "codex") {
-          if (/[\r\n]/.test(data)) {
-            hideCodexCursor(true);
-          } else {
-            showCodexInputCursorBriefly();
-          }
-        }
         invoke("pty_write", {
           id,
           data: Array.from(new TextEncoder().encode(data)),
@@ -789,10 +745,6 @@ export default function TerminalView(
       if (openTimer) clearTimeout(openTimer);
       if (agentReadyTimer) clearTimeout(agentReadyTimer);
       if (agentSlowTimer) clearTimeout(agentSlowTimer);
-      if (outputCursorRestoreTimerRef.current) {
-        clearTimeout(outputCursorRestoreTimerRef.current);
-        outputCursorRestoreTimerRef.current = null;
-      }
       openObserver?.disconnect();
       resolveOpenWaiters();
       if (sessionLookupTimer) clearTimeout(sessionLookupTimer);
@@ -821,14 +773,10 @@ export default function TerminalView(
     const term = termRef.current;
     if (!term) return;
     term.options.minimumContrastRatio = terminalMinimumContrast(mode);
-    term.options.theme = outputCursorHiddenRef.current
-      ? {
-          ...palette.terminal,
-          cursor: "transparent",
-          cursorAccent: "transparent",
-        }
+    term.options.theme = isAgent
+      ? hiddenCursorTheme(palette.terminal)
       : palette.terminal;
-  }, [palette, mode]);
+  }, [palette, mode, isAgent]);
 
   // Live-update font size when zoom changes, then refit + resize PTY.
   useEffect(() => {
@@ -846,13 +794,14 @@ export default function TerminalView(
     resizePtyIfNeeded(term);
   }, [zoom, resizePtyIfNeeded]);
 
-  // Live-update cursor preferences.
+  // Live-update cursor preferences. Agent terminals keep the caret hidden
+  // (no blink) regardless of the user's preference — they draw their own.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     term.options.cursorStyle = cursorStyle;
-    term.options.cursorBlink = outputCursorHiddenRef.current ? false : cursorBlink;
-  }, [cursorStyle, cursorBlink]);
+    term.options.cursorBlink = isAgent ? false : cursorBlink;
+  }, [cursorStyle, cursorBlink, isAgent]);
 
   // Mark active when this panel becomes visible/focused.
   useEffect(() => {
@@ -1231,7 +1180,6 @@ export default function TerminalView(
       onClick={() => {
         if (!terminalOpenRef.current) return;
         termRef.current?.focus();
-        showCodexInputCursorBriefly();
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -1239,7 +1187,10 @@ export default function TerminalView(
       }}
       onWheel={handleWheel}
     >
-      <div ref={terminalHostRef} className="xy-terminal-host" />
+      <div
+        ref={terminalHostRef}
+        className={`xy-terminal-host${isAgent ? " is-agent" : ""}`}
+      />
       {agentLaunchState === "starting" && (
         <div className="xy-agent-launch" aria-live="polite">
           <span className="xy-agent-launch__spinner" />
@@ -1458,6 +1409,23 @@ function isImageFile(file: File): boolean {
 function isImagePasteAgent(cmd: string | undefined): boolean {
   const agentName = getAgentCommandName(cmd);
   return agentName === "claude" || agentName === "codex" || agentName === "opencode";
+}
+
+/**
+ * Agents whose full-screen TUI repaints move xterm's logical cursor around the
+ * screen — dragging the visible caret (and the IME composition box anchored to
+ * it) with it. These agents render their own input highlight, so we keep
+ * xterm's caret hidden for them throughout. Plain shells return false — their
+ * caret rests at the prompt and is left to behave natively.
+ */
+function isCursorManagedAgent(cmd: string | undefined): boolean {
+  const agentName = getAgentCommandName(cmd);
+  return agentName === "claude" || agentName === "codex" || agentName === "opencode";
+}
+
+/** A theme clone with the caret painted transparent (used for agent TUIs). */
+function hiddenCursorTheme(base: ITheme): ITheme {
+  return { ...base, cursor: "transparent", cursorAccent: "transparent" };
 }
 
 function imagePasteSequence(cmd: string | undefined): number[] {

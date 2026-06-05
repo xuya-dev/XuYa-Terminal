@@ -21,7 +21,6 @@ import {
   Activity,
   Check,
   ChevronDown,
-  Clock,
   FolderOpen,
   Gauge,
   GitBranch,
@@ -347,19 +346,6 @@ function formatQuotaTierTitle(tier: AgentQuotaTier) {
     tier.resetsAt ? `重置 ${tier.resetsAt}` : "",
   ].filter(Boolean);
   return parts.join(" · ");
-}
-
-function formatUptime(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${pad(h)}:${pad(m)}:${pad(s)}`;
-}
-
-function formatLocalTime() {
-  return new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
 
 function shellLabelFor(kind: string): string {
@@ -945,19 +931,10 @@ export default function StatusBar() {
   const zoomIn = useSettingsStore((s) => s.zoomIn);
   const zoomOut = useSettingsStore((s) => s.zoomOut);
   const resetZoom = useSettingsStore((s) => s.resetZoom);
-  const [, setTick] = useState(0);
 
-  // One-second tick — forces uptime to re-render.
-  useEffect(() => {
-    const id = setInterval(() => setTick((v) => v + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const uptime = active ? formatUptime(Date.now() - active.startTime) : "—";
   const shell = active ? shellLabelFor(active.shellKind) : "无活跃会话";
   const cwd = active?.cwd ?? "—";
   const showActiveLabel = Boolean(active?.label && active.label !== shell);
-  const localTime = formatLocalTime();
   const agentTool = agentToolFromCommand(active?.agentCommand);
   const canOpenCwd = Boolean(active?.cwd);
 
@@ -987,12 +964,6 @@ export default function StatusBar() {
             <span className="xy-status-active-label-text">{active.label}</span>
           </span>
         )}
-        <span className="xy-status-chip xy-status-chip--ghost">
-          <Clock size={12} strokeWidth={1.7} />
-          <span>
-            运行时间 <span className="xy-status-uptime">{uptime}</span>
-          </span>
-        </span>
         <button
           className="xy-status-chip xy-status-chip--ghost xy-status-cwd-btn"
           type="button"
@@ -1011,10 +982,6 @@ export default function StatusBar() {
       <div className="xy-status-right">
         {agentTool && <AgentProviderStatus tool={agentTool} />}
         <AgentUsageStatus active={active} />
-        <span className="xy-status-clock" title="本地时间">
-          <Clock size={11} strokeWidth={1.7} />
-          <span>{localTime}</span>
-        </span>
         <span className="xy-status-pill">UTF-8</span>
         <span className="xy-status-pill">{eolFor(active?.shellKind)}</span>
         <div className="xy-status-zoom" aria-label="终端字号缩放">

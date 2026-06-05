@@ -4381,12 +4381,15 @@ fn git_worktree_status_inner(cwd: &str) -> Result<Option<GitWorktreeStatus>, Str
         return Ok(None);
     }
 
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(&cwd)
         .arg("status")
         .arg("--porcelain=v1")
-        .arg("-b")
+        .arg("-b");
+    hide_command_window(&mut command);
+    let output = command
         .output()
         .map_err(|e| format!("Failed to run git status: {e}"))?;
 
@@ -4397,6 +4400,17 @@ fn git_worktree_status_inner(cwd: &str) -> Result<Option<GitWorktreeStatus>, Str
     let text = String::from_utf8_lossy(&output.stdout);
     Ok(Some(parse_git_worktree_status(&text)))
 }
+
+#[cfg(windows)]
+fn hide_command_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_command_window(_command: &mut Command) {}
 
 fn parse_git_worktree_status(text: &str) -> GitWorktreeStatus {
     let mut branch = None;
