@@ -878,6 +878,29 @@ body,
   color: var(--xy-fg-muted);
 }
 
+.xy-status-active-label {
+  height: 22px;
+  gap: 5px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--xy-surface-sunken) 54%, transparent);
+  border: 1px solid var(--xy-border-soft);
+  border-radius: 5px;
+  max-width: 190px;
+  color: var(--xy-fg);
+}
+
+.xy-status-active-label svg {
+  color: var(--xy-accent);
+}
+
+.xy-status-active-label-text {
+  min-width: 0;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .xy-status-cwd {
   max-width: 320px;
   overflow: hidden;
@@ -901,6 +924,135 @@ body,
 .xy-status-cwd-btn:disabled {
   cursor: default;
   color: var(--xy-fg-muted);
+}
+
+.xy-status-git {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 260px;
+  height: 22px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--xy-surface-sunken) 58%, transparent);
+  border: 1px solid var(--xy-border-soft);
+  border-radius: 5px;
+  color: var(--xy-fg-muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.xy-status-git:hover {
+  background: color-mix(in srgb, var(--xy-surface-hover) 86%, var(--xy-accent-soft) 14%);
+  border-color: color-mix(in srgb, var(--xy-border) 68%, var(--xy-accent) 32%);
+  color: var(--xy-fg);
+}
+
+.xy-status-git[data-tone="clean"] svg {
+  color: var(--xy-success);
+}
+
+.xy-status-git[data-tone="dirty"] svg {
+  color: var(--xy-warning);
+}
+
+.xy-status-git[data-tone="conflict"] svg {
+  color: var(--xy-danger);
+}
+
+.xy-status-git-branch {
+  min-width: 0;
+  max-width: 116px;
+  overflow: hidden;
+  color: var(--xy-fg);
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xy-status-git-clean {
+  color: var(--xy-success);
+  font-family: var(--xy-font-mono);
+  font-size: 11px;
+}
+
+.xy-status-git-deltas {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--xy-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.xy-status-git-delta[data-kind="staged"] {
+  color: var(--xy-success);
+}
+
+.xy-status-git-delta[data-kind="modified"] {
+  color: var(--xy-warning);
+}
+
+.xy-status-git-delta[data-kind="deleted"],
+.xy-status-git-delta[data-kind="conflict"] {
+  color: var(--xy-danger);
+}
+
+.xy-status-git-delta[data-kind="untracked"] {
+  color: var(--xy-accent);
+}
+
+.xy-status-usage {
+  display: inline-flex;
+  min-width: 154px;
+  max-width: 238px;
+  height: 22px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--xy-surface-sunken) 58%, transparent);
+  border: 1px solid var(--xy-border-soft);
+  border-radius: 5px;
+  color: var(--xy-fg-muted);
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.xy-status-usage svg {
+  flex: 0 0 auto;
+  color: var(--xy-accent);
+}
+
+.xy-status-usage-text {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--xy-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xy-status-usage[data-tone="ready"] {
+  border-color: color-mix(in srgb, var(--xy-info) 34%, var(--xy-border));
+  color: var(--xy-fg);
+}
+
+.xy-status-usage[data-tone="ready"] svg {
+  color: var(--xy-info);
+}
+
+.xy-status-usage[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--xy-danger) 34%, var(--xy-border));
+  color: var(--xy-danger);
+}
+
+.xy-status-usage[data-tone="error"] svg {
+  color: var(--xy-danger);
 }
 
 .xy-status-agent {
@@ -1079,6 +1231,22 @@ body,
   color: var(--xy-fg-muted);
 }
 
+.xy-status-clock {
+  display: inline-flex;
+  width: 76px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--xy-fg-muted);
+  font-family: var(--xy-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.xy-status-clock svg {
+  color: var(--xy-accent);
+}
+
 .xy-status-pill::before {
   content: "";
   display: inline-block;
@@ -1105,14 +1273,34 @@ body,
     max-width: 142px;
   }
 
+  .xy-status-usage {
+    min-width: 124px;
+    max-width: 174px;
+  }
+
   .xy-status-cwd {
     max-width: 180px;
+  }
+
+  .xy-status-active-label-text {
+    max-width: 84px;
+  }
+
+  .xy-status-git {
+    max-width: 190px;
+  }
+
+  .xy-status-git-branch {
+    max-width: 84px;
   }
 }
 
 @media (max-width: 720px) {
+  .xy-status-usage,
   .xy-status-agent,
-  .xy-status-chip--ghost:has(.xy-status-cwd) {
+  .xy-status-active-label,
+  .xy-status-chip--ghost:has(.xy-status-cwd),
+  .xy-status-git {
     display: none;
   }
 }

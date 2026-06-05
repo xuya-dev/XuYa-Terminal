@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open as openShellPath } from "@tauri-apps/plugin-shell";
 import {
   Anthropic,
   DeepSeek,
@@ -25,19 +24,22 @@ import {
   Clock,
   FolderOpen,
   Gauge,
+  GitBranch,
   Loader2,
   Maximize2,
   Minus,
   Plus,
   RefreshCw,
   Server,
+  Terminal,
 } from "lucide-react";
-import { useSessionStore } from "../stores/sessionStore";
+import { useSessionStore, type SessionMeta } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { getAgentCommandName } from "../lib/agentCommand";
 import { restartAgentTerminal } from "./TerminalView";
 
 type AgentTool = "claude" | "codex";
+type AgentUsageTool = "claude" | "codex" | "opencode";
 type AgentQuotaProviderType = "" | "newapi" | "sub2api";
 
 interface AgentCustomProviderSummary {
@@ -101,6 +103,31 @@ interface AgentProviderQuotaResult {
   error?: string | null;
 }
 
+interface AgentSessionUsage {
+  agent: AgentUsageTool;
+  sessionId?: string | null;
+  source: string;
+  contextTokens?: number | null;
+  totalTokens?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheCreationTokens?: number | null;
+  reasoningTokens?: number | null;
+  contextWindow?: number | null;
+  updatedAt?: number | null;
+}
+
+interface GitWorktreeStatus {
+  branch?: string | null;
+  staged: number;
+  modified: number;
+  deleted: number;
+  untracked: number;
+  conflicts: number;
+  clean: boolean;
+}
+
 interface ProviderOption {
   id: string;
   label: string;
@@ -126,10 +153,26 @@ const BUILT_IN_PROVIDER_ORDER: Record<AgentTool, string[]> = {
   codex: ["official"],
 };
 const QUOTA_REFRESH_INTERVAL_MS = 60_000;
+const GIT_STATUS_REFRESH_INTERVAL_MS = 15_000;
+const AGENT_USAGE_REFRESH_INTERVAL_MS = 15_000;
 
 function agentToolFromCommand(command?: string): AgentTool | null {
   const name = getAgentCommandName(command);
   return name === "claude" || name === "codex" ? name : null;
+}
+
+function agentUsageToolFromCommand(command?: string): AgentUsageTool | null {
+  const name = getAgentCommandName(command);
+  if (name === "claude" || name === "codex" || name === "opencode") {
+    return name;
+  }
+  return null;
+}
+
+function agentUsageToolLabel(tool: AgentUsageTool) {
+  if (tool === "claude") return "Claude";
+  if (tool === "codex") return "Codex";
+  return "OpenCode";
 }
 
 function customProviderSelector(id: string) {
@@ -220,6 +263,36 @@ function hasQuotaNumber(value?: number | null) {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function hasUsageNumber(value?: number | null): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function formatTokenCount(value?: number | null) {
+  if (!hasUsageNumber(value)) return "—";
+  const rounded = Math.max(0, value);
+  if (rounded >= 1_000_000) {
+    return `${formatTokenUnit(rounded / 1_000_000)}M`;
+  }
+  if (rounded >= 1_000) {
+    return `${formatTokenUnit(rounded / 1_000)}k`;
+  }
+  return Math.round(rounded).toLocaleString();
+}
+
+function formatTokenUnit(value: number) {
+  return value
+    .toLocaleString(undefined, {
+      maximumFractionDigits: value < 10 ? 1 : 0,
+      minimumFractionDigits: 0,
+    })
+    .replace(/\.0$/, "");
+}
+
+function formatFullTokenCount(value?: number | null) {
+  if (!hasUsageNumber(value)) return "—";
+  return Math.round(Math.max(0, value)).toLocaleString();
+}
+
 function weeklyQuotaTier(quota?: AgentProviderQuotaResult | null) {
   return quota?.tiers?.find((tier) => {
     const name = tier.name.toLowerCase();
@@ -285,6 +358,10 @@ function formatUptime(ms: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
+function formatLocalTime() {
+  return new Date().toLocaleTimeString("zh-CN", { hour12: false });
+}
+
 function shellLabelFor(kind: string): string {
   return (
     {
@@ -300,6 +377,275 @@ function shellLabelFor(kind: string): string {
 /** POSIX-y shells default to LF; Windows shells to CRLF. */
 function eolFor(kind?: string): string {
   return kind === "wsl" || kind === "gitBash" ? "LF" : "CRLF";
+}
+
+function sessionStatusLabel(status: SessionMeta["status"]) {
+  if (status === "running") return "运行";
+  if (status === "exited") return "退出";
+  return "空闲";
+}
+
+function gitStatusTone(status: GitWorktreeStatus) {
+  if (status.conflicts > 0) return "conflict";
+  return status.clean ? "clean" : "dirty";
+}
+
+function gitStatusTitle(status: GitWorktreeStatus) {
+  const branch = status.branch ?? "HEAD";
+  if (status.clean) return `Git ${branch}\n工作区干净`;
+  return [
+    `Git ${branch}`,
+    status.staged > 0 ? `已暂存 ${status.staged}` : "",
+    status.modified > 0 ? `已修改 ${status.modified}` : "",
+    status.deleted > 0 ? `已删除 ${status.deleted}` : "",
+    status.untracked > 0 ? `未跟踪 ${status.untracked}` : "",
+    status.conflicts > 0 ? `冲突 ${status.conflicts}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function gitStatusDeltas(status: GitWorktreeStatus) {
+  return [
+    status.staged > 0
+      ? { kind: "staged", label: `+${status.staged}`, title: "已暂存" }
+      : null,
+    status.modified > 0
+      ? { kind: "modified", label: `~${status.modified}`, title: "已修改" }
+      : null,
+    status.deleted > 0
+      ? { kind: "deleted", label: `-${status.deleted}`, title: "已删除" }
+      : null,
+    status.untracked > 0
+      ? { kind: "untracked", label: `?${status.untracked}`, title: "未跟踪" }
+      : null,
+    status.conflicts > 0
+      ? { kind: "conflict", label: `!${status.conflicts}`, title: "冲突" }
+      : null,
+  ].filter(Boolean) as Array<{ kind: string; label: string; title: string }>;
+}
+
+function GitStatus({ cwd }: { cwd?: string | null }) {
+  const [status, setStatus] = useState<GitWorktreeStatus | null>(null);
+  const requestIdRef = useRef(0);
+
+  const loadGitStatus = useCallback(async () => {
+    if (!cwd) {
+      setStatus(null);
+      return;
+    }
+
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+
+    try {
+      const next = await invoke<GitWorktreeStatus | null>(
+        "git_worktree_status",
+        { cwd },
+      );
+      if (requestIdRef.current === requestId) setStatus(next);
+    } catch (error) {
+      if (requestIdRef.current === requestId) setStatus(null);
+      console.error("Failed to read git status", error);
+    }
+  }, [cwd]);
+
+  useEffect(() => {
+    setStatus(null);
+    void loadGitStatus();
+    if (!cwd) return;
+
+    const intervalId = window.setInterval(
+      () => void loadGitStatus(),
+      GIT_STATUS_REFRESH_INTERVAL_MS,
+    );
+    const handleFocus = () => void loadGitStatus();
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [cwd, loadGitStatus]);
+
+  if (!status) return null;
+
+  const branch = status.branch ?? "HEAD";
+  const deltas = gitStatusDeltas(status);
+
+  return (
+    <button
+      className="xy-status-git"
+      data-tone={gitStatusTone(status)}
+      type="button"
+      title={gitStatusTitle(status)}
+      aria-label="刷新 Git 状态"
+      onClick={() => void loadGitStatus()}
+    >
+      <GitBranch size={12} strokeWidth={1.8} />
+      <span className="xy-status-git-branch">{branch}</span>
+      {status.clean ? (
+        <span className="xy-status-git-clean">干净</span>
+      ) : (
+        <span className="xy-status-git-deltas">
+          {deltas.map((item) => (
+            <span
+              key={item.kind}
+              className="xy-status-git-delta"
+              data-kind={item.kind}
+              title={item.title}
+            >
+              {item.label}
+            </span>
+          ))}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function agentUsageTitle(
+  tool: AgentUsageTool,
+  usage: AgentSessionUsage | null,
+  error: string | null,
+  unavailable: boolean,
+  sessionId?: string | null,
+) {
+  const parts = [`${agentUsageToolLabel(tool)} 会话用量`];
+  const resolvedSessionId = usage?.sessionId ?? sessionId;
+  if (resolvedSessionId) parts.push(`会话 ${resolvedSessionId}`);
+  if (usage) {
+    parts.push(`上下文 ${formatFullTokenCount(usage.contextTokens)}`);
+    parts.push(`总 Token ${formatFullTokenCount(usage.totalTokens)}`);
+    if (hasUsageNumber(usage.inputTokens)) {
+      parts.push(`输入 ${formatFullTokenCount(usage.inputTokens)}`);
+    }
+    if (hasUsageNumber(usage.outputTokens)) {
+      parts.push(`输出 ${formatFullTokenCount(usage.outputTokens)}`);
+    }
+    if (hasUsageNumber(usage.cacheReadTokens)) {
+      parts.push(`缓存读取 ${formatFullTokenCount(usage.cacheReadTokens)}`);
+    }
+    if (hasUsageNumber(usage.cacheCreationTokens)) {
+      parts.push(`缓存写入 ${formatFullTokenCount(usage.cacheCreationTokens)}`);
+    }
+    if (hasUsageNumber(usage.reasoningTokens)) {
+      parts.push(`推理 ${formatFullTokenCount(usage.reasoningTokens)}`);
+    }
+    if (hasUsageNumber(usage.contextWindow)) {
+      parts.push(`上下文窗口 ${formatFullTokenCount(usage.contextWindow)}`);
+    }
+    if (usage.updatedAt) {
+      parts.push(`更新 ${new Date(usage.updatedAt).toLocaleTimeString()}`);
+    }
+  } else if (error) {
+    parts.push(error);
+  } else if (unavailable) {
+    parts.push("当前会话日志没有可读 usage 字段");
+  } else {
+    parts.push("正在读取当前会话日志");
+  }
+  return parts.join("\n");
+}
+
+function AgentUsageStatus({ active }: { active: SessionMeta | null }) {
+  const tool = agentUsageToolFromCommand(active?.agentCommand);
+  const cwd = active?.cwd && active.cwd !== "—" ? active.cwd : null;
+  const sessionId = active?.agentSessionId ?? null;
+  const [usage, setUsage] = useState<AgentSessionUsage | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+  const requestIdRef = useRef(0);
+
+  const loadUsage = useCallback(async () => {
+    if (!tool) {
+      setUsage(null);
+      setError(null);
+      setUnavailable(false);
+      setLoading(false);
+      return;
+    }
+
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setLoading(true);
+
+    try {
+      const next = await invoke<AgentSessionUsage | null>(
+        "agent_session_usage",
+        {
+          agentCommand: tool,
+          cwd,
+          sessionId,
+        },
+      );
+      if (requestIdRef.current !== requestId) return;
+      setUsage(next);
+      setUnavailable(!next);
+      setError(null);
+    } catch (loadError) {
+      if (requestIdRef.current !== requestId) return;
+      setUsage(null);
+      setUnavailable(false);
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      if (requestIdRef.current === requestId) setLoading(false);
+    }
+  }, [cwd, sessionId, tool]);
+
+  useEffect(() => {
+    requestIdRef.current += 1;
+    setUsage(null);
+    setError(null);
+    setUnavailable(false);
+    setLoading(false);
+    if (!tool) return;
+
+    void loadUsage();
+    const intervalId = window.setInterval(
+      () => void loadUsage(),
+      AGENT_USAGE_REFRESH_INTERVAL_MS,
+    );
+    const handleFocus = () => void loadUsage();
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [active?.id, loadUsage, tool]);
+
+  if (!tool) return null;
+  if (!usage && !loading && !error && !unavailable) return null;
+  if (!usage && !loading && !error && unavailable && !sessionId) return null;
+
+  const tone = error ? "error" : usage ? "ready" : "muted";
+  const text = (() => {
+    if (usage) {
+      return `上下文 ${formatTokenCount(usage.contextTokens)} · 总 ${formatTokenCount(
+        usage.totalTokens,
+      )}`;
+    }
+    if (loading) return "Token 读取中";
+    if (error) return "Token 失败";
+    return "Token 未记录";
+  })();
+
+  return (
+    <span
+      className="xy-status-usage"
+      data-tone={tone}
+      title={agentUsageTitle(tool, usage, error, unavailable, sessionId)}
+    >
+      {loading && !usage ? (
+        <Loader2 className="xy-spin" size={11} strokeWidth={1.8} />
+      ) : (
+        <Gauge size={11} strokeWidth={1.8} />
+      )}
+      <span className="xy-status-usage-text">{text}</span>
+    </span>
+  );
 }
 
 function AgentProviderStatus({ tool }: { tool: AgentTool }) {
@@ -610,12 +956,14 @@ export default function StatusBar() {
   const uptime = active ? formatUptime(Date.now() - active.startTime) : "—";
   const shell = active ? shellLabelFor(active.shellKind) : "无活跃会话";
   const cwd = active?.cwd ?? "—";
+  const showActiveLabel = Boolean(active?.label && active.label !== shell);
+  const localTime = formatLocalTime();
   const agentTool = agentToolFromCommand(active?.agentCommand);
   const canOpenCwd = Boolean(active?.cwd);
 
   const openCwd = useCallback(() => {
     if (!active?.cwd) return;
-    void openShellPath(active.cwd).catch((error) => {
+    void invoke("open_path_in_file_manager", { path: active.cwd }).catch((error) => {
       console.error("Failed to open current folder", error);
     });
   }, [active?.cwd]);
@@ -630,6 +978,15 @@ export default function StatusBar() {
           <Activity size={12} strokeWidth={2} />
           <span>{shell}</span>
         </span>
+        {showActiveLabel && active && (
+          <span
+            className="xy-status-chip xy-status-active-label"
+            title={`当前标签 ${active.label}\n状态 ${sessionStatusLabel(active.status)}`}
+          >
+            <Terminal size={12} strokeWidth={1.8} />
+            <span className="xy-status-active-label-text">{active.label}</span>
+          </span>
+        )}
         <span className="xy-status-chip xy-status-chip--ghost">
           <Clock size={12} strokeWidth={1.7} />
           <span>
@@ -648,10 +1005,16 @@ export default function StatusBar() {
             {cwd}
           </span>
         </button>
+        <GitStatus cwd={active?.cwd} />
       </div>
 
       <div className="xy-status-right">
         {agentTool && <AgentProviderStatus tool={agentTool} />}
+        <AgentUsageStatus active={active} />
+        <span className="xy-status-clock" title="本地时间">
+          <Clock size={11} strokeWidth={1.7} />
+          <span>{localTime}</span>
+        </span>
         <span className="xy-status-pill">UTF-8</span>
         <span className="xy-status-pill">{eolFor(active?.shellKind)}</span>
         <div className="xy-status-zoom" aria-label="终端字号缩放">

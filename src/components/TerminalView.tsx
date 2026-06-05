@@ -84,6 +84,10 @@ function shellLabelFor(kind: string): string {
   );
 }
 
+function terminalMinimumContrast(mode: "light" | "dark"): number {
+  return mode === "light" ? 4.5 : 1;
+}
+
 export default function TerminalView(
   props: IDockviewPanelProps<TerminalViewParams>,
 ) {
@@ -125,6 +129,7 @@ export default function TerminalView(
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const palette = useThemeStore((s) => s.palette);
+  const mode = useThemeStore((s) => s.mode);
   const zoom = useSettingsStore((s) => s.zoom);
   const cursorStyle = useSettingsStore((s) => s.cursorStyle);
   const cursorBlink = useSettingsStore((s) => s.cursorBlink);
@@ -250,9 +255,9 @@ export default function TerminalView(
       allowProposedApi: true,
       allowTransparency: false,
       drawBoldTextInBrightColors: true,
-      // 1 = no contrast rewriting. Agents (Claude Code / Codex) ship carefully
-      // tuned truecolor syntax highlighting; forcing a 4.5 ratio washed it out.
-      minimumContrastRatio: 1,
+      // Light terminals need guardrails for agent ANSI palettes that were
+      // tuned on dark backgrounds. Dark themes keep the raw colors intact.
+      minimumContrastRatio: terminalMinimumContrast(mode),
     });
 
     // Let the browser raise paste events for terminal text/image paste.
@@ -489,6 +494,7 @@ export default function TerminalView(
       if (props.api.getParameters<TerminalViewParams>().agentSessionId !== sessionId) {
         props.api.updateParameters({ agentSessionId: sessionId });
       }
+      updateSession(props.api.id, { agentSessionId: sessionId });
       if (persistLayout) {
         if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
         layoutPersistTimer = setTimeout(() => {
@@ -703,12 +709,14 @@ export default function TerminalView(
           label,
           shellKind,
           agentCommand: props.params?.agentCommand,
+          agentSessionId: resolvedAgentSessionId,
           cwd: cwd ?? "—",
           startTime: Date.now(),
           status: "running",
         });
       } else {
         updateSession(props.api.id, {
+          agentSessionId: resolvedAgentSessionId,
           startTime: Date.now(),
           status: "running",
           exitCode: undefined,
@@ -812,6 +820,7 @@ export default function TerminalView(
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
+    term.options.minimumContrastRatio = terminalMinimumContrast(mode);
     term.options.theme = outputCursorHiddenRef.current
       ? {
           ...palette.terminal,
@@ -819,7 +828,7 @@ export default function TerminalView(
           cursorAccent: "transparent",
         }
       : palette.terminal;
-  }, [palette]);
+  }, [palette, mode]);
 
   // Live-update font size when zoom changes, then refit + resize PTY.
   useEffect(() => {

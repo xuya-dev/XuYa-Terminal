@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -338,6 +339,35 @@ pub struct AgentProviderQuotaTier {
     resets_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionUsage {
+    agent: String,
+    session_id: Option<String>,
+    source: String,
+    context_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    cache_creation_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
+    context_window: Option<u64>,
+    updated_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktreeStatus {
+    branch: Option<String>,
+    staged: usize,
+    modified: usize,
+    deleted: usize,
+    untracked: usize,
+    conflicts: usize,
+    clean: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
@@ -431,6 +461,20 @@ pub async fn pty_close(id: String, state: State<'_, AppState>) -> Result<(), Str
     Ok(())
 }
 
+#[tauri::command]
+pub async fn open_path_in_file_manager(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || open_path_in_file_manager_inner(&path))
+        .await
+        .map_err(|e| format!("Open path failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn git_worktree_status(cwd: String) -> Result<Option<GitWorktreeStatus>, String> {
+    tokio::task::spawn_blocking(move || git_worktree_status_inner(&cwd))
+        .await
+        .map_err(|e| format!("Git status failed: {e}"))?
+}
+
 /// Save clipboard image bytes to a unique temp file and return its path.
 #[tauri::command]
 pub async fn save_temp_image(name: String, data: Vec<u8>) -> Result<String, String> {
@@ -479,6 +523,19 @@ pub async fn find_latest_agent_session(
     })
     .await
     .map_err(|e| format!("Session lookup failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn agent_session_usage(
+    agent_command: String,
+    cwd: Option<String>,
+    session_id: Option<String>,
+) -> Result<Option<AgentSessionUsage>, String> {
+    tokio::task::spawn_blocking(move || {
+        agent_session_usage_inner(&agent_command, cwd.as_deref(), session_id.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Session usage lookup failed: {e}"))?
 }
 
 #[tauri::command]
@@ -1400,6 +1457,689 @@ fn read_first_json_line(path: &Path) -> Option<Value> {
     let mut line = String::new();
     reader.read_line(&mut line).ok()?;
     serde_json::from_str(line.trim()).ok()
+}
+
+fn agent_session_usage_inner(
+    agent_command: &str,
+    cwd: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<Option<AgentSessionUsage>, String> {
+    match agent_command.trim() {
+        "claude" => {
+            let Some(path) = claude_session_file(cwd, session_id)? else {
+                return Ok(None);
+            };
+            parse_claude_session_usage(&path, session_id)
+        }
+        "codex" => {
+            let Some(path) = codex_session_file(cwd, session_id)? else {
+                return Ok(None);
+            };
+            parse_codex_session_usage(&path, session_id)
+        }
+        "opencode" => {
+            let Some(path) = opencode_session_file(session_id)? else {
+                return Ok(None);
+            };
+            parse_opencode_session_usage(&path, session_id)
+        }
+        _ => Ok(None),
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TokenUsageNumbers {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    cache_creation_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+    context_tokens: Option<u64>,
+    context_window: Option<u64>,
+}
+
+impl TokenUsageNumbers {
+    fn has_any(self) -> bool {
+        self.input_tokens.is_some()
+            || self.output_tokens.is_some()
+            || self.cache_read_tokens.is_some()
+            || self.cache_creation_tokens.is_some()
+            || self.reasoning_tokens.is_some()
+            || self.total_tokens.is_some()
+            || self.context_tokens.is_some()
+            || self.context_window.is_some()
+    }
+
+    fn total(self) -> Option<u64> {
+        self.total_tokens.or_else(|| {
+            sum_present(&[
+                self.input_tokens,
+                self.output_tokens,
+                self.cache_read_tokens,
+                self.cache_creation_tokens,
+                self.reasoning_tokens,
+            ])
+        })
+    }
+
+    fn context(self) -> Option<u64> {
+        self.context_tokens.or_else(|| {
+            sum_present(&[
+                self.input_tokens,
+                self.cache_read_tokens,
+                self.cache_creation_tokens,
+            ])
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TokenUsageAggregate {
+    input_tokens: u64,
+    has_input_tokens: bool,
+    output_tokens: u64,
+    has_output_tokens: bool,
+    cache_read_tokens: u64,
+    has_cache_read_tokens: bool,
+    cache_creation_tokens: u64,
+    has_cache_creation_tokens: bool,
+    reasoning_tokens: u64,
+    has_reasoning_tokens: bool,
+    total_tokens: u64,
+    has_total_tokens: bool,
+}
+
+impl TokenUsageAggregate {
+    fn from_usage(usage: TokenUsageNumbers) -> Self {
+        let mut aggregate = Self::default();
+        aggregate.add_usage(usage);
+        aggregate
+    }
+
+    fn add_usage(&mut self, usage: TokenUsageNumbers) {
+        add_optional_u64(
+            &mut self.input_tokens,
+            &mut self.has_input_tokens,
+            usage.input_tokens,
+        );
+        add_optional_u64(
+            &mut self.output_tokens,
+            &mut self.has_output_tokens,
+            usage.output_tokens,
+        );
+        add_optional_u64(
+            &mut self.cache_read_tokens,
+            &mut self.has_cache_read_tokens,
+            usage.cache_read_tokens,
+        );
+        add_optional_u64(
+            &mut self.cache_creation_tokens,
+            &mut self.has_cache_creation_tokens,
+            usage.cache_creation_tokens,
+        );
+        add_optional_u64(
+            &mut self.reasoning_tokens,
+            &mut self.has_reasoning_tokens,
+            usage.reasoning_tokens,
+        );
+        add_optional_u64(
+            &mut self.total_tokens,
+            &mut self.has_total_tokens,
+            usage.total(),
+        );
+    }
+
+    fn has_any(&self) -> bool {
+        self.has_input_tokens
+            || self.has_output_tokens
+            || self.has_cache_read_tokens
+            || self.has_cache_creation_tokens
+            || self.has_reasoning_tokens
+            || self.has_total_tokens
+    }
+}
+
+fn claude_session_file(
+    cwd: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let home = match home_dir() {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+    let projects_dir = home.join(".claude").join("projects");
+    let project_dir = cwd
+        .map(claude_project_key)
+        .map(|key| projects_dir.join(key));
+
+    if let Some(session_id) = clean_optional_text(session_id) {
+        if let Some(project_dir) = &project_dir {
+            let direct = project_dir.join(format!("{session_id}.jsonl"));
+            if direct.exists() {
+                return Ok(Some(direct));
+            }
+        }
+
+        for file in collect_files(&projects_dir, "jsonl")? {
+            if path_stem_eq(&file, &session_id) {
+                return Ok(Some(file));
+            }
+        }
+        return Ok(None);
+    }
+
+    latest_file_by_modified(project_dir.as_deref().unwrap_or(&projects_dir), "jsonl")
+}
+
+fn codex_session_file(
+    cwd: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let home = match home_dir() {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+    let sessions_dir = home.join(".codex").join("sessions");
+    let files = collect_files(&sessions_dir, "jsonl")?;
+
+    if let Some(session_id) = clean_optional_text(session_id) {
+        for file in files {
+            if path_stem_eq(&file, &session_id) {
+                return Ok(Some(file));
+            }
+            if codex_file_session_meta(&file)
+                .as_ref()
+                .is_some_and(|(id, _)| id == &session_id)
+            {
+                return Ok(Some(file));
+            }
+        }
+        return Ok(None);
+    }
+
+    let target_cwd = cwd.map(normalize_path_text);
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for file in files {
+        let Some(modified) = file_modified(&file) else {
+            continue;
+        };
+        if let Some(target) = &target_cwd {
+            let Some((_, session_cwd)) = codex_file_session_meta(&file) else {
+                continue;
+            };
+            let Some(session_cwd) = session_cwd else {
+                continue;
+            };
+            if normalize_path_text(&session_cwd) != *target {
+                continue;
+            }
+        }
+        if best.as_ref().map_or(true, |(time, _)| modified > *time) {
+            best = Some((modified, file));
+        }
+    }
+
+    Ok(best.map(|(_, path)| path))
+}
+
+fn opencode_session_file(session_id: Option<&str>) -> Result<Option<PathBuf>, String> {
+    let home = match home_dir() {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+    let diff_dir = home
+        .join(".local")
+        .join("share")
+        .join("opencode")
+        .join("storage")
+        .join("session_diff");
+
+    if let Some(session_id) = clean_optional_text(session_id) {
+        let direct = diff_dir.join(format!("{session_id}.json"));
+        if direct.exists() {
+            return Ok(Some(direct));
+        }
+        for file in collect_files(&diff_dir, "json")? {
+            if path_stem_eq(&file, &session_id) {
+                return Ok(Some(file));
+            }
+        }
+        return Ok(None);
+    }
+
+    latest_file_by_modified(&diff_dir, "json")
+}
+
+fn parse_claude_session_usage(
+    path: &Path,
+    session_id: Option<&str>,
+) -> Result<Option<AgentSessionUsage>, String> {
+    let file = File::open(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let reader = BufReader::new(file);
+    let mut aggregate = TokenUsageAggregate::default();
+    let mut latest_context_tokens = None;
+    let mut context_window = None;
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        if let Some(usage) = first_usage_at_paths(&value, &[&["message", "usage"], &["usage"]]) {
+            latest_context_tokens = usage.context().or(latest_context_tokens);
+            context_window = usage.context_window.or(context_window);
+            aggregate.add_usage(usage);
+        }
+    }
+
+    Ok(build_agent_session_usage(
+        "claude",
+        path,
+        session_id,
+        "claude-jsonl",
+        aggregate,
+        latest_context_tokens,
+        context_window,
+    ))
+}
+
+fn parse_codex_session_usage(
+    path: &Path,
+    session_id: Option<&str>,
+) -> Result<Option<AgentSessionUsage>, String> {
+    let file = File::open(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let reader = BufReader::new(file);
+    let mut cumulative: Option<TokenUsageAggregate> = None;
+    let mut summed = TokenUsageAggregate::default();
+    let mut latest_context_tokens = None;
+    let mut context_window = None;
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+
+        if let Some(window) = first_token_number_at_paths(
+            &value,
+            &[
+                &["payload", "info", "model_context_window"],
+                &["payload", "info", "modelContextWindow"],
+                &["payload", "model_context_window"],
+                &["payload", "modelContextWindow"],
+                &["model_context_window"],
+                &["modelContextWindow"],
+                &["context_window"],
+                &["contextWindow"],
+            ],
+        ) {
+            context_window = Some(window);
+        }
+
+        if let Some(total_usage) = first_usage_at_paths(
+            &value,
+            &[
+                &["payload", "info", "total_token_usage"],
+                &["payload", "info", "totalTokenUsage"],
+                &["payload", "total_token_usage"],
+                &["payload", "totalTokenUsage"],
+                &["total_token_usage"],
+                &["totalTokenUsage"],
+            ],
+        ) {
+            context_window = total_usage.context_window.or(context_window);
+            cumulative = Some(TokenUsageAggregate::from_usage(total_usage));
+        }
+
+        if let Some(last_usage) = first_usage_at_paths(
+            &value,
+            &[
+                &["payload", "info", "last_token_usage"],
+                &["payload", "info", "lastTokenUsage"],
+                &["payload", "last_token_usage"],
+                &["payload", "lastTokenUsage"],
+                &["last_token_usage"],
+                &["lastTokenUsage"],
+            ],
+        ) {
+            latest_context_tokens = last_usage.context().or(latest_context_tokens);
+            context_window = last_usage.context_window.or(context_window);
+        }
+
+        if let Some(usage) = first_usage_at_paths(
+            &value,
+            &[
+                &["payload", "response", "usage"],
+                &["payload", "event", "usage"],
+                &["payload", "message", "usage"],
+                &["payload", "usage"],
+                &["response", "usage"],
+                &["event", "usage"],
+                &["message", "usage"],
+                &["usage"],
+            ],
+        ) {
+            latest_context_tokens = usage.context().or(latest_context_tokens);
+            context_window = usage.context_window.or(context_window);
+            if cumulative.is_none() {
+                summed.add_usage(usage);
+            }
+        }
+    }
+
+    Ok(build_agent_session_usage(
+        "codex",
+        path,
+        session_id,
+        "codex-jsonl",
+        cumulative.unwrap_or(summed),
+        latest_context_tokens,
+        context_window,
+    ))
+}
+
+fn parse_opencode_session_usage(
+    path: &Path,
+    session_id: Option<&str>,
+) -> Result<Option<AgentSessionUsage>, String> {
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
+    let mut aggregate = TokenUsageAggregate::default();
+    let mut latest_context_tokens = None;
+    let mut context_window = None;
+    collect_json_usage_values(
+        &value,
+        &mut aggregate,
+        &mut latest_context_tokens,
+        &mut context_window,
+    );
+
+    Ok(build_agent_session_usage(
+        "opencode",
+        path,
+        session_id,
+        "opencode-json",
+        aggregate,
+        latest_context_tokens,
+        context_window,
+    ))
+}
+
+fn collect_json_usage_values(
+    value: &Value,
+    aggregate: &mut TokenUsageAggregate,
+    latest_context_tokens: &mut Option<u64>,
+    context_window: &mut Option<u64>,
+) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_json_usage_values(item, aggregate, latest_context_tokens, context_window);
+            }
+        }
+        Value::Object(_) => {
+            if let Some(usage) = first_usage_at_paths(
+                value,
+                &[
+                    &["usage"],
+                    &["tokenUsage"],
+                    &["tokens"],
+                    &["response", "usage"],
+                    &["message", "usage"],
+                    &["cost", "usage"],
+                    &["info", "usage"],
+                ],
+            ) {
+                *latest_context_tokens = usage.context().or(*latest_context_tokens);
+                *context_window = usage.context_window.or(*context_window);
+                aggregate.add_usage(usage);
+            }
+            if let Some(items) = value.as_object() {
+                for child in items.values() {
+                    collect_json_usage_values(
+                        child,
+                        aggregate,
+                        latest_context_tokens,
+                        context_window,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn build_agent_session_usage(
+    agent: &str,
+    path: &Path,
+    session_id: Option<&str>,
+    source: &str,
+    aggregate: TokenUsageAggregate,
+    context_tokens: Option<u64>,
+    context_window: Option<u64>,
+) -> Option<AgentSessionUsage> {
+    if !aggregate.has_any() && context_tokens.is_none() && context_window.is_none() {
+        return None;
+    }
+
+    Some(AgentSessionUsage {
+        agent: agent.to_string(),
+        session_id: clean_optional_text(session_id).or_else(|| file_stem(path)),
+        source: source.to_string(),
+        context_tokens,
+        total_tokens: aggregate.has_total_tokens.then_some(aggregate.total_tokens),
+        input_tokens: aggregate.has_input_tokens.then_some(aggregate.input_tokens),
+        output_tokens: aggregate
+            .has_output_tokens
+            .then_some(aggregate.output_tokens),
+        cache_read_tokens: aggregate
+            .has_cache_read_tokens
+            .then_some(aggregate.cache_read_tokens),
+        cache_creation_tokens: aggregate
+            .has_cache_creation_tokens
+            .then_some(aggregate.cache_creation_tokens),
+        reasoning_tokens: aggregate
+            .has_reasoning_tokens
+            .then_some(aggregate.reasoning_tokens),
+        context_window,
+        updated_at: file_modified(path).and_then(system_time_to_millis),
+    })
+}
+
+fn codex_file_session_meta(path: &Path) -> Option<(String, Option<String>)> {
+    let meta = read_first_json_line(path)?;
+    if meta.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return None;
+    }
+    let payload = &meta["payload"];
+    let id = payload.get("id").and_then(Value::as_str)?.to_string();
+    let cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some((id, cwd))
+}
+
+fn latest_file_by_modified(root: &Path, extension: &str) -> Result<Option<PathBuf>, String> {
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for file in collect_files(root, extension)? {
+        let Some(modified) = file_modified(&file) else {
+            continue;
+        };
+        if best.as_ref().map_or(true, |(time, _)| modified > *time) {
+            best = Some((modified, file));
+        }
+    }
+    Ok(best.map(|(_, path)| path))
+}
+
+fn first_usage_at_paths(value: &Value, paths: &[&[&str]]) -> Option<TokenUsageNumbers> {
+    paths.iter().find_map(|path| {
+        let usage = value_path(value, path)?;
+        let usage = token_usage_numbers(usage)?;
+        usage.has_any().then_some(usage)
+    })
+}
+
+fn first_token_number_at_paths(value: &Value, paths: &[&[&str]]) -> Option<u64> {
+    paths
+        .iter()
+        .find_map(|path| token_number_path_u64(value, path))
+}
+
+fn token_usage_numbers(value: &Value) -> Option<TokenUsageNumbers> {
+    let input_tokens = first_token_number_key(
+        value,
+        &[
+            "input_tokens",
+            "prompt_tokens",
+            "inputTokens",
+            "promptTokens",
+        ],
+    );
+    let output_tokens = first_token_number_key(
+        value,
+        &[
+            "output_tokens",
+            "completion_tokens",
+            "outputTokens",
+            "completionTokens",
+        ],
+    );
+    let cache_read_tokens = first_token_number_key(
+        value,
+        &[
+            "cache_read_input_tokens",
+            "cached_input_tokens",
+            "cacheReadInputTokens",
+            "cachedInputTokens",
+            "cacheReadTokens",
+            "cachedTokens",
+        ],
+    )
+    .or_else(|| token_number_path_u64(value, &["input_token_details", "cached_tokens"]))
+    .or_else(|| token_number_path_u64(value, &["inputTokenDetails", "cachedTokens"]))
+    .or_else(|| token_number_path_u64(value, &["prompt_tokens_details", "cached_tokens"]))
+    .or_else(|| token_number_path_u64(value, &["promptTokensDetails", "cachedTokens"]));
+    let cache_creation_tokens = first_token_number_key(
+        value,
+        &[
+            "cache_creation_input_tokens",
+            "cacheCreationInputTokens",
+            "cacheCreationTokens",
+        ],
+    );
+    let reasoning_tokens = first_token_number_key(
+        value,
+        &[
+            "reasoning_tokens",
+            "reasoning_output_tokens",
+            "reasoningTokens",
+            "reasoningOutputTokens",
+        ],
+    )
+    .or_else(|| token_number_path_u64(value, &["output_tokens_details", "reasoning_tokens"]))
+    .or_else(|| token_number_path_u64(value, &["outputTokenDetails", "reasoningTokens"]))
+    .or_else(|| token_number_path_u64(value, &["completion_tokens_details", "reasoning_tokens"]))
+    .or_else(|| token_number_path_u64(value, &["completionTokensDetails", "reasoningTokens"]));
+    let total_tokens = first_token_number_key(
+        value,
+        &["total_tokens", "totalTokens", "tokens_total", "tokensTotal"],
+    );
+    let context_tokens = first_token_number_key(
+        value,
+        &[
+            "context_tokens",
+            "contextTokens",
+            "context_length",
+            "contextLength",
+            "prompt_context_tokens",
+            "promptContextTokens",
+        ],
+    );
+    let context_window = first_token_number_key(
+        value,
+        &[
+            "context_window",
+            "contextWindow",
+            "model_context_window",
+            "modelContextWindow",
+        ],
+    );
+    let usage = TokenUsageNumbers {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        reasoning_tokens,
+        total_tokens,
+        context_tokens,
+        context_window,
+    };
+    usage.has_any().then_some(usage)
+}
+
+fn first_token_number_key(value: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(token_value_to_u64))
+}
+
+fn token_number_path_u64(value: &Value, path: &[&str]) -> Option<u64> {
+    value_path(value, path).and_then(token_value_to_u64)
+}
+
+fn token_value_to_u64(value: &Value) -> Option<u64> {
+    if let Some(number) = value.as_u64() {
+        return Some(number);
+    }
+    if let Some(number) = value.as_i64() {
+        return (number >= 0).then_some(number as u64);
+    }
+    if let Some(number) = value.as_f64() {
+        return (number.is_finite() && number >= 0.0).then_some(number.round() as u64);
+    }
+    let text = value.as_str()?.trim().replace(',', "");
+    text.parse::<u64>().ok()
+}
+
+fn sum_present(values: &[Option<u64>]) -> Option<u64> {
+    let mut total = 0_u64;
+    let mut has_value = false;
+    for value in values.iter().flatten() {
+        total = total.saturating_add(*value);
+        has_value = true;
+    }
+    has_value.then_some(total)
+}
+
+fn add_optional_u64(total: &mut u64, has_value: &mut bool, value: Option<u64>) {
+    if let Some(value) = value {
+        *total = total.saturating_add(value);
+        *has_value = true;
+    }
+}
+
+fn path_stem_eq(path: &Path, expected: &str) -> bool {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .is_some_and(|stem| stem == expected)
+}
+
+fn file_stem(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
 }
 
 fn file_modified(path: &Path) -> Option<SystemTime> {
@@ -3607,8 +4347,155 @@ fn system_time_from_millis(ms: u64) -> Option<SystemTime> {
     UNIX_EPOCH.checked_add(Duration::from_millis(ms))
 }
 
+fn system_time_to_millis(time: SystemTime) -> Option<u64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+}
+
 fn normalize_path_text(path: &str) -> String {
     path.replace('\\', "/").to_lowercase()
+}
+
+fn open_path_in_file_manager_inner(path: &str) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err(format!("Path does not exist: {}", target.display()));
+    }
+
+    let folder = if target.is_dir() {
+        target
+    } else {
+        target
+            .parent()
+            .ok_or_else(|| format!("Path has no parent folder: {}", target.display()))?
+            .to_path_buf()
+    };
+
+    open_folder(&folder)
+}
+
+fn git_worktree_status_inner(cwd: &str) -> Result<Option<GitWorktreeStatus>, String> {
+    let cwd = PathBuf::from(cwd);
+    if !cwd.is_dir() {
+        return Ok(None);
+    }
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&cwd)
+        .arg("status")
+        .arg("--porcelain=v1")
+        .arg("-b")
+        .output()
+        .map_err(|e| format!("Failed to run git status: {e}"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(Some(parse_git_worktree_status(&text)))
+}
+
+fn parse_git_worktree_status(text: &str) -> GitWorktreeStatus {
+    let mut branch = None;
+    let mut staged = 0;
+    let mut modified = 0;
+    let mut deleted = 0;
+    let mut untracked = 0;
+    let mut conflicts = 0;
+
+    for line in text.lines() {
+        if let Some(next_branch) = parse_git_branch(line) {
+            branch = Some(next_branch);
+            continue;
+        }
+
+        let mut chars = line.chars();
+        let index = chars.next().unwrap_or(' ');
+        let worktree = chars.next().unwrap_or(' ');
+
+        if matches!((index, worktree), ('?', '?')) {
+            untracked += 1;
+            continue;
+        }
+        if matches!((index, worktree), ('!', '!')) {
+            continue;
+        }
+        if is_git_conflict_status(index, worktree) {
+            conflicts += 1;
+            continue;
+        }
+
+        if !matches!(index, ' ' | '?' | '!') {
+            staged += 1;
+        }
+        if index == 'D' || worktree == 'D' {
+            deleted += 1;
+        } else if !matches!(worktree, ' ' | '?' | '!') {
+            modified += 1;
+        }
+    }
+
+    let clean = staged == 0 && modified == 0 && deleted == 0 && untracked == 0 && conflicts == 0;
+    GitWorktreeStatus {
+        branch,
+        staged,
+        modified,
+        deleted,
+        untracked,
+        conflicts,
+        clean,
+    }
+}
+
+fn parse_git_branch(line: &str) -> Option<String> {
+    let head = line.strip_prefix("## ")?.trim();
+    let head = head
+        .strip_prefix("No commits yet on ")
+        .or_else(|| head.strip_prefix("Initial commit on "))
+        .unwrap_or(head);
+    let branch = head.split("...").next().unwrap_or(head).trim();
+    if branch.is_empty() {
+        None
+    } else {
+        Some(branch.to_string())
+    }
+}
+
+fn is_git_conflict_status(index: char, worktree: char) -> bool {
+    matches!(
+        (index, worktree),
+        ('D', 'D') | ('A', 'U') | ('U', 'D') | ('U', 'A') | ('D', 'U') | ('A', 'A') | ('U', 'U')
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn open_folder(path: &Path) -> Result<(), String> {
+    Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .map_err(|e| format!("Failed to open Explorer for {}: {e}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn open_folder(path: &Path) -> Result<(), String> {
+    Command::new("open")
+        .arg(path)
+        .spawn()
+        .map_err(|e| format!("Failed to open Finder for {}: {e}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_folder(path: &Path) -> Result<(), String> {
+    Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map_err(|e| format!("Failed to open file manager for {}: {e}", path.display()))?;
+    Ok(())
 }
 
 fn claude_project_key(path: &str) -> String {

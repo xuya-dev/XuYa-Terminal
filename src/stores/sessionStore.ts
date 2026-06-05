@@ -15,6 +15,8 @@ export interface SessionMeta {
   shellKind: ShellKind;
   /** Agent CLI command if this session is running an agent. */
   agentCommand?: string;
+  /** Backing agent conversation/session id when the CLI exposes one. */
+  agentSessionId?: string;
   /** Spawn working directory. Updated later if we wire OSC-7. */
   cwd: string;
   /** ms since epoch — drives the uptime display in the status bar. */
