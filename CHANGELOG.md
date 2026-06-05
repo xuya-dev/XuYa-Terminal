@@ -2,6 +2,22 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [0.1.7] - 2026-06-05
+
+### ✨ 状态栏信息增强 (Status Bar)
+- 底部状态栏新增当前 Git 分支与工作区变更概览，支持展示已暂存、已修改、删除、未跟踪和冲突数量。
+- Agent 会话状态栏新增真实会话用量读取，展示当前上下文大小与会话总 Token 消耗，并在悬浮提示中提供输入、输出、缓存与推理 Token 明细。
+- Token 用量移动到代理商额度信息后方展示，移除低价值的标签数量统计，降低底栏噪音。
+
+### 🐛 修复与可读性 (Fixes & Readability)
+- 修复点击底部栏当前目录时未打开系统文件资源管理器的问题，改为由 Tauri 后端调用原生文件管理器。
+- 修复浅色模式下 Agent 终端输出文字过浅的问题，浅色终端恢复最低对比度保护，深色模式保留原始 ANSI 配色。
+- 修复关于弹窗版本号容易遗漏更新的问题，改为从 Tauri 应用版本动态读取。
+
+### 🚀 发布流程 (Release)
+- 新增 `pnpm run version:set -- <version>` 版本同步脚本，统一更新 `package.json`、workspace `Cargo.toml`、`Cargo.lock`、`tauri.conf.json` 与 README 示例版本。
+- README 发布流程改为推荐使用版本同步脚本，并明确 changelog 仍需手动维护。
+
 ## [0.1.6] - 2026-06-05
 
 ### ⚡ 终端渲染与性能 (Terminal Rendering & Performance)
