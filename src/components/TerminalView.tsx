@@ -453,6 +453,7 @@ export default function TerminalView(
       sinceMs: number,
       attempt = 0,
       onFound?: (sessionId: string) => void,
+      acceptSessionId: (sessionId: string) => boolean = () => true,
     ) => {
       if (disposed || attempt >= 24) return;
 
@@ -465,15 +466,23 @@ export default function TerminalView(
             sinceMs,
           );
           if (agentSessionId) {
-            rememberPanelAgentSession(agentSessionId);
-            onFound?.(agentSessionId);
-            return;
+            if (acceptSessionId(agentSessionId)) {
+              rememberPanelAgentSession(agentSessionId);
+              onFound?.(agentSessionId);
+              return;
+            }
           }
         } catch {
           /* ignore lookup failures */
         }
 
-        scheduleAgentSessionLookup(agentCmd, sinceMs, attempt + 1, onFound);
+        scheduleAgentSessionLookup(
+          agentCmd,
+          sinceMs,
+          attempt + 1,
+          onFound,
+          acceptSessionId,
+        );
       }, attempt === 0 ? 1500 : 3000);
     };
 
@@ -593,11 +602,18 @@ export default function TerminalView(
       const storedAgentSessionId =
         props.params?.agentSessionId ?? getStoredAgentSessionId(props.api.id);
       let resolvedAgentSessionId = storedAgentSessionId;
+      const agentName = getAgentCommandName(agentCmd);
+      const forkClaudeSession = !initial && agentName === "claude";
+      const resumeExistingAgentSession =
+        !initial &&
+        (forkClaudeSession ||
+          (agentName === "codex" && Boolean(storedAgentSessionId)));
       const startup = await resolveAgentStartupCommand(
         agentCmd,
-        props.params?.resumeOnRestore,
+        props.params?.resumeOnRestore || resumeExistingAgentSession,
         storedAgentSessionId,
         lookupAgentSession,
+        { forkClaudeSession },
       );
       resolvedAgentSessionId = startup.agentSessionId;
       const isExistingBinding =
@@ -612,7 +628,9 @@ export default function TerminalView(
       }
 
       const agentCmdToBind =
-        agentCmd && !resolvedAgentSessionId ? agentCmd : undefined;
+        agentCmd && (!resolvedAgentSessionId || forkClaudeSession)
+          ? agentCmd
+          : undefined;
       const commandStartedAt = await openPty(
         startup.command ?? props.params?.startupCommand ?? null,
       );
@@ -646,7 +664,9 @@ export default function TerminalView(
       if (agentCmdToBind && !sessionLookupTimer) {
         scheduleAgentSessionLookup(agentCmdToBind, commandStartedAt, 0, () => {
           markAgentReady();
-        });
+        }, forkClaudeSession && storedAgentSessionId
+          ? (sessionId) => sessionId !== storedAgentSessionId
+          : undefined);
       }
 
       wireTerminalInput();
@@ -1213,6 +1233,7 @@ async function resolveAgentStartupCommand(
   resumeOnRestore: boolean | undefined,
   agentSessionId: string | undefined,
   lookupAgentSession: AgentSessionLookup,
+  opts: { forkClaudeSession?: boolean } = {},
 ): Promise<AgentStartupResolution> {
   let resolvedAgentSessionId = agentSessionId;
   const agentName = getAgentCommandName(cmd);
@@ -1236,6 +1257,7 @@ async function resolveAgentStartupCommand(
       cmd,
       resumeOnRestore,
       resolvedAgentSessionId,
+      opts,
     ),
     agentSessionId: resolvedAgentSessionId,
   };
@@ -1245,6 +1267,7 @@ function getAgentStartupCommand(
   cmd: string | undefined,
   resumeOnRestore: boolean | undefined,
   agentSessionId: string | undefined,
+  opts: { forkClaudeSession?: boolean } = {},
 ): string | undefined {
   if (!cmd) return undefined;
   const parsed = parseAgentCommand(cmd);
@@ -1260,9 +1283,10 @@ function getAgentStartupCommand(
   }
 
   if (agentSessionId) {
+    const claudeForkArg = opts.forkClaudeSession ? " --fork-session" : "";
     return (
       {
-        claude: `${invocation} --resume ${quoteArg(agentSessionId)}`,
+        claude: `${invocation} --resume ${quoteArg(agentSessionId)}${claudeForkArg}`,
         codex: `${invocation} resume ${quoteArg(agentSessionId)}`,
         opencode: `${invocation} -s ${quoteArg(agentSessionId)}`,
       }[parsed.name] ?? `${invocation} --resume ${quoteArg(agentSessionId)}`
@@ -1273,7 +1297,7 @@ function getAgentStartupCommand(
 
   return (
     {
-      claude: `${invocation} --continue`,
+      claude: `${invocation} --continue${opts.forkClaudeSession ? " --fork-session" : ""}`,
     }[parsed.name] ?? `${invocation} --resume`
   );
 }
