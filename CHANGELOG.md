@@ -2,6 +2,13 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [0.1.8] - 2026-06-05
+
+### 🐛 终端与状态栏修复 (Terminal & Status Bar Fixes)
+- 修复 Codex、Claude Code、OpenCode 等 Agent 输出代码或全屏重绘时 xterm 光标乱窜、IME 候选框跟随跳动的问题，Agent 会话中固定隐藏 xterm caret，并将输入辅助锚点固定到底部输入区域。
+- 移除底部栏运行时间与本地时间显示，取消每秒状态栏重绘，避免应用在前台时出现秒级闪动。
+- Windows 下后台读取 Git 状态时使用无窗口方式启动 `git status`，避免打包版每 15 秒弹出短暂控制台窗口。
+
 ## [0.1.7] - 2026-06-05
 
 ### ✨ 状态栏信息增强 (Status Bar)
