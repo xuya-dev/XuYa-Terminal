@@ -1,79 +1,69 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import fs from "node:fs";
+import path from "node:path";
 
-const versionInput = process.argv[2]?.trim();
-const nextVersion = versionInput?.replace(/^v/i, "");
-const semverPattern =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const version = process.argv[2]?.trim();
 
-if (!nextVersion || !semverPattern.test(nextVersion)) {
+if (!version || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
   console.error("Usage: pnpm run version:set -- <semver>");
-  console.error("Example: pnpm run version:set -- 0.1.7");
   process.exit(1);
 }
 
-const localRustPackages = ["xuya-core", "xuya-pty", "xuya-terminal"];
+const root = process.cwd();
 
-updateJsonVersion("package.json");
-updateJsonVersion("src-tauri/tauri.conf.json");
+function read(file) {
+  return fs.readFileSync(path.join(root, file), "utf8");
+}
 
-replaceInFile(
-  "Cargo.toml",
-  /(^version = ")[^"]+(")/m,
-  `$1${nextVersion}$2`,
+function write(file, content) {
+  fs.writeFileSync(path.join(root, file), content);
+}
+
+function updateJson(file, updater) {
+  const data = JSON.parse(read(file));
+  updater(data);
+  write(file, `${JSON.stringify(data, null, 2)}\n`);
+}
+
+function replace(file, pattern, replacement) {
+  const before = read(file);
+  if (!pattern.test(before)) {
+    throw new Error(`No version match found in ${file}`);
+  }
+  const after = before.replace(pattern, replacement);
+  write(file, after);
+}
+
+updateJson("package.json", (data) => {
+  data.version = version;
+});
+
+updateJson("src-tauri/tauri.conf.json", (data) => {
+  data.version = version;
+});
+
+replace("Cargo.toml", /^version = ".+"/m, `version = "${version}"`);
+replace("src-tauri/Cargo.toml", /^version = ".+"/m, `version = "${version}"`);
+replace(
+  "Cargo.lock",
+  /(name = "xuya-terminal"\r?\nversion = )"[^"]+"/,
+  `$1"${version}"`,
 );
 
-let cargoLock = readText("Cargo.lock");
-for (const packageName of localRustPackages) {
-  const packagePattern = new RegExp(
-    `(\\[\\[package\\]\\]\\r?\\nname = "${escapeRegExp(
-      packageName,
-    )}"\\r?\\nversion = ")[^"]+(")`,
-    "m",
+if (fs.existsSync(path.join(root, "src-tauri/Cargo.lock"))) {
+  const before = read("src-tauri/Cargo.lock");
+  const after = before.replace(
+    /(name = "xuya-terminal"\r?\nversion = )"[^"]+"/,
+    `$1"${version}"`,
   );
-  if (!packagePattern.test(cargoLock)) {
-    throw new Error(`No Cargo.lock package matched for ${packageName}`);
-  }
-  cargoLock = cargoLock.replace(packagePattern, `$1${nextVersion}$2`);
-}
-writeText("Cargo.lock", cargoLock);
-
-replaceInFile("README.md", /当前版本：`[^`]+`/, `当前版本：\`${nextVersion}\``);
-replaceInFile(
-  "README.md",
-  /pnpm run version:set -- [^\r\n]+/,
-  `pnpm run version:set -- ${nextVersion}`,
-);
-replaceInFile("README.md", /git tag v[^\r\n]+/, `git tag v${nextVersion}`);
-replaceInFile(
-  "README.md",
-  /git push origin v[^\r\n]+/,
-  `git push origin v${nextVersion}`,
-);
-
-console.log(`Version set to ${nextVersion}`);
-
-function updateJsonVersion(filePath) {
-  JSON.parse(readText(filePath));
-  replaceInFile(filePath, /("version"\s*:\s*")[^"]+(")/, `$1${nextVersion}$2`);
+  if (after !== before) write("src-tauri/Cargo.lock", after);
 }
 
-function replaceInFile(filePath, pattern, replacement) {
-  const current = readText(filePath);
-  if (!pattern.test(current)) {
-    throw new Error(`No version field matched in ${filePath}`);
-  }
-  const next = current.replace(pattern, replacement);
-  writeText(filePath, next);
-}
+let readme = read("README.md");
+readme = readme
+  .replace(/当前版本：`[^`]+`/, `当前版本：\`${version}\``)
+  .replace(/pnpm run version:set -- [^\r\n]+/, `pnpm run version:set -- ${version}`)
+  .replace(/git tag v[^\r\n]+/, `git tag v${version}`)
+  .replace(/git push origin v[^\r\n]+/, `git push origin v${version}`);
+write("README.md", readme);
 
-function readText(filePath) {
-  return readFileSync(filePath, "utf8");
-}
-
-function writeText(filePath, text) {
-  writeFileSync(filePath, text, "utf8");
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+console.log(`Version set to ${version}`);

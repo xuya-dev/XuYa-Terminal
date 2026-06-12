@@ -1,41 +1,92 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-v2-schema/main/schema.json",
+  "$schema": "https://schema.tauri.app/config/2",
   "productName": "XuYa Terminal",
-  "version": "0.1.8",
+  "version": "1.0.0",
   "identifier": "com.xuya.terminal",
   "build": {
-    "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist",
+    "removeUnusedCommands": true
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "XuYa Terminal",
+        "width": 800,
+        "height": 600,
+        "minWidth": 420,
+        "minHeight": 280,
+        "decorations": false,
+        "transparent": false,
+        "visible": false,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost blob:; media-src 'self' asset: https://asset.localhost blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https: http://localhost:* http://127.0.0.1:*; frame-src 'self' http: https: asset: https://asset.localhost; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      }
+    }
   },
   "bundle": {
     "active": true,
+    "targets": "all",
     "createUpdaterArtifacts": true,
-    "targets": ["nsis", "msi"],
+    "copyright": "Copyright 2026 YuanXu",
+    "license": "Apache-2.0",
+    "publisher": "YuanXu",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
-  },
-  "app": {
-    "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "XuYa Terminal",
-        "width": 1280,
-        "height": 820,
-        "minWidth": 880,
-        "minHeight": 540,
-        "resizable": true,
-        "fullscreen": false,
-        "decorations": false,
-        "transparent": false
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "./entitlements.plist"
+    },
+    "linux": {
+      "deb": {
+        "section": "utils",
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": true
       }
-    ]
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    },
+    "category": "DeveloperTool",
+    "shortDescription": "AI-native terminal emulator",
+    "longDescription": "XuYa Terminal — an AI-native terminal emulator based on terax-ai, with multi-tab, file explorer, code editor, web preview, and AI agents."
   },
   "plugins": {
     "updater": {

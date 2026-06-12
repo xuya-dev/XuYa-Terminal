@@ -1,6 +1,6 @@
 # 自动更新发布流程
 
-XuYa Terminal 使用 Tauri v2 updater 插件，通过 GitHub Releases 提供 `latest.json` 和安装包。
+XuYa Terminal 使用 Tauri v2 updater 插件，通过 GitHub Releases 提供 `latest.json` 和多平台安装包。
 
 ## GitHub Secrets
 
@@ -34,16 +34,17 @@ failed to decode secret key: incorrect updater private key password: Missing com
 1. 同步版本号：
    - `package.json`
    - `src-tauri/tauri.conf.json`
+   - `src-tauri/Cargo.toml`
    - Cargo workspace version
 2. 提交并推送代码到主分支。
 3. 创建并推送版本 tag，例如：
 
 ```powershell
-git tag v0.1.2
-git push origin v0.1.2
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-GitHub Actions 会构建 Windows 安装包、生成 updater 签名，并上传 `latest.json` 到 GitHub Release。客户端检查更新时会请求：
+GitHub Actions 会构建 Windows、macOS 和 Linux 安装包，生成 updater 签名，并上传 `latest.json` 到 GitHub Release。客户端检查更新时会请求：
 
 ```text
 https://github.com/xuya-dev/XuYa-Terminal/releases/latest/download/latest.json
@@ -65,3 +66,7 @@ pnpm tauri build
 - `target/release/bundle/nsis/*.exe.sig`
 - `target/release/bundle/msi/*.msi`
 - `target/release/bundle/msi/*.msi.sig`
+- `target/release/bundle/dmg/*.dmg`
+- `target/release/bundle/appimage/*.AppImage`
+- `target/release/bundle/deb/*.deb`
+- `target/release/bundle/rpm/*.rpm`

@@ -4,75 +4,80 @@ on:
   push:
     tags:
       - "v*"
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
   publish-tauri:
-    runs-on: windows-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            rust-target: aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            rust-target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ""
+            rust-target: ""
+          - platform: windows-latest
+            args: ""
+            rust-target: ""
 
+    runs-on: ${{ matrix.platform }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v4
         with:
-          node-version: 22
+          version: 11.5.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
           cache: pnpm
 
-      - name: Setup Rust
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          key: ${{ matrix.platform }}-${{ matrix.rust-target }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare updater signing key
-        shell: pwsh
-        env:
-          RAW_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:RAW_TAURI_SIGNING_PRIVATE_KEY)) {
-            throw "Missing TAURI_SIGNING_PRIVATE_KEY secret."
-          }
-
-          $rawKey = $env:RAW_TAURI_SIGNING_PRIVATE_KEY.Trim()
-
-          if ($rawKey.StartsWith("untrusted comment:")) {
-            $normalizedKey = $rawKey -replace "`r`n", "`n"
-            $encodedKey = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($normalizedKey))
-          } else {
-            $encodedKey = $rawKey -replace "\s", ""
-
-            try {
-              $decodedKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedKey))
-            } catch {
-              throw "TAURI_SIGNING_PRIVATE_KEY must be the Tauri-generated base64 private key or the full two-line minisign private key."
-            }
-
-            if (-not $decodedKey.StartsWith("untrusted comment:")) {
-              throw "TAURI_SIGNING_PRIVATE_KEY is missing the private key comment line. Copy the full Tauri-generated private key, not only the encoded key body."
-            }
-          }
-
-          "TAURI_SIGNING_PRIVATE_KEY=$encodedKey" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Publish Tauri release
-        uses: tauri-apps/tauri-action@v0.6.2
+      - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: "XuYa Terminal v__VERSION__"
-          releaseBody: "Windows installer and updater artifacts for XuYa Terminal."
+          tagName: ${{ github.ref_name }}
+          releaseName: "XuYa Terminal ${{ github.ref_name }}"
+          releaseBody: "Multi-platform release for Windows, macOS, and Linux. Auto-update is built in."
           releaseDraft: false
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           updaterJsonPreferNsis: true
+          args: ${{ matrix.args }}

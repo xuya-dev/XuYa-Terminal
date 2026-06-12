@@ -1,54 +1,101 @@
-import { useEffect, useState } from "react";
+import { USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
+import { cn } from "@/lib/utils";
+import {
+  Cancel01Icon,
+  Copy01Icon,
+  MinusSignIcon,
+  SquareIcon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Copy } from "lucide-react";
+import { useEffect, useState } from "react";
 
-/**
- * Custom replacements for the OS title-bar buttons. Active because
- * `tauri.conf.json` has `decorations: false`.
- */
-export default function WindowControls() {
+type Props = {
+  /** Render only the close button (used by the settings window). */
+  closeOnly?: boolean;
+};
+
+export function WindowControls({ closeOnly = false }: Props) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
+    if (!USE_CUSTOM_WINDOW_CONTROLS) return;
     const w = getCurrentWindow();
-    w.isMaximized().then(setMaximized).catch(() => {});
-    const unlisten = w.onResized(() => {
-      w.isMaximized().then(setMaximized).catch(() => {});
-    });
-    return () => {
-      unlisten.then((fn) => fn());
+    const sync = (max: boolean) => {
+      setMaximized(max);
+      if (max) {
+        document.documentElement.dataset.maximized = "";
+      } else {
+        delete document.documentElement.dataset.maximized;
+      }
     };
+    let unlisten: (() => void) | undefined;
+    void w.isMaximized().then(sync);
+    void w
+      .onResized(() => {
+        void w.isMaximized().then(sync);
+      })
+      .then((un) => {
+        unlisten = un;
+      });
+    return () => unlisten?.();
   }, []);
 
-  const win = () => getCurrentWindow();
+  if (!USE_CUSTOM_WINDOW_CONTROLS) return null;
+
+  const w = getCurrentWindow();
 
   return (
-    <div className="xy-window-controls">
-      <button
-        className="xy-wc-btn"
-        title="最小化"
-        onClick={() => win().minimize()}
-      >
-        <Minus size={14} strokeWidth={1.6} />
-      </button>
-      <button
-        className="xy-wc-btn"
-        title={maximized ? "还原" : "最大化"}
-        onClick={() => win().toggleMaximize()}
-      >
-        {maximized ? (
-          <Copy size={12} strokeWidth={1.6} />
-        ) : (
-          <Square size={12} strokeWidth={1.6} />
-        )}
-      </button>
-      <button
-        className="xy-wc-btn xy-wc-btn--close"
-        title="关闭"
-        onClick={() => win().close()}
-      >
-        <X size={14} strokeWidth={1.8} />
-      </button>
+    <div className="flex h-full shrink-0 items-center gap-0.5 pr-1">
+      {!closeOnly && (
+        <>
+          <CtlButton ariaLabel="最小化" onClick={() => void w.minimize()}>
+            <HugeiconsIcon icon={MinusSignIcon} size={12} strokeWidth={2} />
+          </CtlButton>
+          <CtlButton
+            ariaLabel={maximized ? "还原" : "最大化"}
+            onClick={() => void w.toggleMaximize()}
+          >
+            <HugeiconsIcon
+              icon={maximized ? Copy01Icon : SquareIcon}
+              size={12}
+              strokeWidth={2}
+            />
+          </CtlButton>
+        </>
+      )}
+      <CtlButton ariaLabel="关闭" onClick={() => void w.close()} danger>
+        <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
+      </CtlButton>
     </div>
+  );
+}
+
+function CtlButton({
+  ariaLabel,
+  onClick,
+  children,
+  danger,
+}: {
+  ariaLabel: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      title={ariaLabel}
+      onClick={onClick}
+      className={cn(
+        "grid size-7 place-items-center rounded-md text-muted-foreground transition-colors",
+        danger
+          ? "hover:bg-destructive/15 hover:text-destructive"
+          : "hover:bg-accent hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }

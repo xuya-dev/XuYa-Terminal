@@ -2,10 +2,17 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [1.0.0] - 2026-06-12
+
+### 🚀 多系统发布 (Multi-platform Release)
+- 版本号提升至 `1.0.0`，作为首个多系统发布版本。
+- GitHub Actions 发布流程扩展为 Windows、macOS 和 Linux 构建矩阵，并继续生成 Tauri updater 所需的 `latest.json`。
+- Windows 自动更新继续优先使用 NSIS 安装包，保持旧版本升级路径稳定。
+
 ## [0.1.8] - 2026-06-05
 
 ### 🐛 终端与状态栏修复 (Terminal & Status Bar Fixes)
-- 修复 Codex、Claude Code、OpenCode 等 Agent 输出代码或全屏重绘时 xterm 光标乱窜、IME 候选框跟随跳动的问题，Agent 会话中固定隐藏 xterm caret，并将输入辅助锚点固定到底部输入区域。
+- 修复 Codex、Claude Code、Open Code 等 Agent 输出代码或全屏重绘时 xterm 光标乱窜、IME 候选框跟随跳动的问题，Agent 会话中固定隐藏 xterm caret，并将输入辅助锚点固定到底部输入区域。
 - 移除底部栏运行时间与本地时间显示，取消每秒状态栏重绘，避免应用在前台时出现秒级闪动。
 - Windows 下后台读取 Git 状态时使用无窗口方式启动 `git status`，避免打包版每 15 秒弹出短暂控制台窗口。
 
@@ -156,8 +163,8 @@
 - **底色一致性融合**：通过将终端核心背景色暴露为 `--xy-terminal-bg` CSS 自定义属性，使得选项卡底部及衬底外边距（padding）区域的纯白底框被完全抹除，衬底和终端背景色彻底实现无缝色泽融合。
 
 ### 🤖 终端与 AI 编程适配 (PTY & AI Integration)
-- **自动回车执行**：将写入 PTY 终端的 Agent 会话（如 `Claude Code`、`Codex`、`OpenCode`）启动指令末尾的回车符替换为适用于 Windows 环境的标准的回车换行符 `\r\n`。现在点击相应选项即可在新建标签页中实现免手动干预的自动回车运行。
-- **剪贴板图片粘贴支持**：在终端视图内识别图片粘贴事件。Claude Code / Codex / OpenCode 会按各自 Windows 图片粘贴快捷键触发原生剪贴板读取；图片文件或 WebView 可读取的截图数据会保存至系统临时路径，并向当前终端注入双引号包裹的绝对文件路径。
+- **自动回车执行**：将写入 PTY 终端的 Agent 会话（如 `Claude Code`、`Codex`、`Open Code`）启动指令末尾的回车符替换为适用于 Windows 环境的标准的回车换行符 `\r\n`。现在点击相应选项即可在新建标签页中实现免手动干预的自动回车运行。
+- **剪贴板图片粘贴支持**：在终端视图内识别图片粘贴事件。Claude Code / Codex / Open Code 会按各自 Windows 图片粘贴快捷键触发原生剪贴板读取；图片文件或 WebView 可读取的截图数据会保存至系统临时路径，并向当前终端注入双引号包裹的绝对文件路径。
 
 ### 📦 项目开源准备 (Open-Source Prep)
 - **开源文件准备**：
