@@ -101,7 +101,8 @@ jobs:
           mkdir -p release-manifest
           gh release download "${GITHUB_REF_NAME}" \
             --pattern latest.json \
-            --dir release-manifest
+            --dir release-manifest \
+            --repo "${GITHUB_REPOSITORY}"
 
       - name: Prefer MSI for Windows updates
         run: |
@@ -135,7 +136,7 @@ jobs:
       - name: Upload sanitized updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" release-manifest/latest.json --clobber
+        run: gh release upload "${GITHUB_REF_NAME}" release-manifest/latest.json --clobber --repo "${GITHUB_REPOSITORY}"
 
       - name: Delete stale NSIS release assets
         env:
