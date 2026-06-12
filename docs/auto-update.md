@@ -40,8 +40,8 @@ failed to decode secret key: incorrect updater private key password: Missing com
 3. 创建并推送版本 tag，例如：
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 GitHub Actions 会构建 Windows、macOS 和 Linux 安装包，生成 updater 签名，并上传 `latest.json` 到 GitHub Release。客户端检查更新时会请求：

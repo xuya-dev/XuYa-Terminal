@@ -210,7 +210,7 @@ export function ModelsSection() {
   };
 
   if (!keys) {
-    return <div className="text-[12px] text-muted-foreground">Loading…</div>;
+    return <div className="text-[12px] text-muted-foreground">加载中…</div>;
   }
 
   const configuredIds = new Set(
@@ -378,7 +378,7 @@ function AddProviderMenu({
           className="flex items-center gap-2 text-[12px]"
         >
           <ProviderIcon provider="openai-compatible" size={13} />
-          <span>OpenAI Compatible</span>
+          <span>OpenAI 兼容</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -912,7 +912,7 @@ function CustomEndpointCard({
         />
         <ProviderIcon provider="openai-compatible" size={15} />
         <span className="text-[12.5px] font-medium truncate">
-          {endpoint.name || "OpenAI Compatible"}
+          {endpoint.name || "OpenAI 兼容"}
         </span>
         {endpoint.modelId.trim() && (
           <span className="text-[10.5px] text-muted-foreground truncate font-mono">

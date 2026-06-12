@@ -283,8 +283,8 @@ function ModelDropdown() {
           )}
           title={
             currentProviderHasKey
-              ? `Model: ${current.label}`
-              : `${current.label} — no key configured`
+              ? `模型：${current.label}`
+              : `${current.label} 未配置密钥`
           }
         >
           {current.label}
@@ -363,7 +363,7 @@ function ModelDropdown() {
                   title={
                     hasKeyFor(p.id)
                       ? p.label
-                      : `${p.label} — not configured`
+                      : `${p.label} 未配置`
                   }
                   active={activeProvider === p.id}
                   muted={!hasKeyFor(p.id)}
@@ -374,7 +374,7 @@ function ModelDropdown() {
             {customEndpoints.length > 0 && (
               <ProviderPill
                 icon={PlugIcon}
-                title="OpenAI Compatible"
+                title="OpenAI 兼容"
                 active={activeProvider === COMPAT_PROVIDER_ID}
                 onClick={() => setActiveProvider(COMPAT_PROVIDER_ID)}
               />
@@ -386,7 +386,7 @@ function ModelDropdown() {
             {activeProvider === COMPAT_PROVIDER_ID && (
               <div className="flex items-center gap-1.5 px-3 pt-1 pb-1.5 text-[11px] font-medium tracking-tight text-muted-foreground/90">
                 <HugeiconsIcon icon={PlugIcon} size={13} strokeWidth={1.75} />
-                <span>OpenAI Compatible</span>
+                <span>OpenAI 兼容</span>
               </div>
             )}
             {activeProvider !== null &&

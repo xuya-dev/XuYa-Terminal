@@ -4,7 +4,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Terax",
+        "title": "XuYa Terminal",
         "decorations": false,
         "transparent": true,
         "visible": false,

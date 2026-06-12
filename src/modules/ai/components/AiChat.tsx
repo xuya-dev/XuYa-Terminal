@@ -209,7 +209,7 @@ export function AiChatView({
       <Conversation>
         <ConversationContent>
           <ConversationEmptyState
-            title="向 Terax 提问"
+            title="向助手提问"
             description="解释命令输出、修复错误、生成代码片段或执行任务。"
           />
         </ConversationContent>

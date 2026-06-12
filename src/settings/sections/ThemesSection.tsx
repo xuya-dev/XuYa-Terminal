@@ -152,7 +152,7 @@ export function ThemesSection() {
               className="h-7 px-2 text-[11px]"
               onClick={onPickThemeFile}
             >
-              导入 .terax-theme
+              导入
             </Button>
           </div>
           <input

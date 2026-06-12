@@ -58,7 +58,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   // ── 兼容服务商 ──────────────────────────────────────────────────────
   {
     id: "openai-compatible",
-    label: "OpenAI Compatible",
+    label: "OpenAI 兼容",
     keyringAccount: "openai-compatible-api-key",
     keyPrefix: null,
     consoleUrl: "https://platform.openai.com/docs/api-reference",

@@ -220,7 +220,7 @@ export function NotificationBell({ onActivate, onActivateLocal }: Props) {
           <div className="border-t border-border/60 px-3 py-5 text-center text-xs leading-relaxed text-muted-foreground">
             暂无智能体活动。
             <br />
-            运行 Terax 智能体或 Claude Code 以在此处跟踪。
+            运行智能体或 Claude Code 后可在此处跟踪。
           </div>
         ) : (
           <div className="max-h-80 overflow-y-auto border-t border-border/60 p-1">

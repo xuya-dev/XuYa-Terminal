@@ -89,7 +89,7 @@ export function AboutSection() {
           {build ? `${build} · v${version}` : `v${version}`}
         </dd>
 
-        <dt className="text-muted-foreground">Bundle ID</dt>
+        <dt className="text-muted-foreground">包 ID</dt>
         <dd className="font-mono text-[11.5px]">com.xuya.terminal</dd>
 
         <dt className="text-muted-foreground">许可证</dt>

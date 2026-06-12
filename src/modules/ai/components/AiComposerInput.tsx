@@ -257,7 +257,7 @@ export function AiComposerInput() {
                   c.submit();
                 }
               }}
-              placeholder="向 Terax 提问   -   # 代码片段和命令，@ 文件"
+              placeholder="向助手提问   -   # 代码片段和命令，@ 文件"
               rows={1}
               className={cn(
                 "max-h-40 flex-1 resize-none bg-transparent text-[13px] leading-relaxed outline-none",

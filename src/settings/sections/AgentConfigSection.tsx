@@ -1061,7 +1061,7 @@ function ClaudeConfig({
   // 拉取模型列表
   const handleFetchModels = async () => {
     if (!baseUrl) {
-      alert("请先填写 Base URL");
+      alert("请先填写基础 URL");
       return;
     }
 
@@ -1311,7 +1311,7 @@ function ClaudeConfig({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label className="text-[10px]">Base URL</Label>
+              <Label className="text-[10px]">基础 URL</Label>
               <Input
                 value={customBaseUrl}
                 onChange={(e) => setCustomBaseUrl(e.target.value)}
@@ -1320,7 +1320,7 @@ function ClaudeConfig({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label className="text-[10px]">API Key</Label>
+              <Label className="text-[10px]">API 密钥</Label>
               <Input
                 type="password"
                 value={customApiKey}
@@ -1375,7 +1375,7 @@ function ClaudeConfig({
             {customQuotaProviderType === "newapi" && (
               <>
                 <div className="flex flex-col gap-2">
-                  <Label className="text-[10px]">Access Token</Label>
+                  <Label className="text-[10px]">访问令牌</Label>
                   <Input
                     type="password"
                     value={customQuotaAccessToken}
@@ -1471,7 +1471,7 @@ function ClaudeConfig({
           {/* Base URL */}
           {provider !== "official" && (
             <div className="flex flex-col gap-2">
-              <Label className="text-[11px]">Base URL</Label>
+              <Label className="text-[11px]">基础 URL</Label>
               <div className="flex gap-2">
                 <Input
                   value={baseUrl}
@@ -1494,7 +1494,7 @@ function ClaudeConfig({
 
           {/* API Key */}
           <div className="flex flex-col gap-2">
-            <Label className="text-[11px]">API Key</Label>
+            <Label className="text-[11px]">API 密钥</Label>
             <Input
               type="password"
               value={apiKey}
@@ -1848,7 +1848,7 @@ function CodexConfig({
   // 拉取模型列表
   const handleFetchModels = async () => {
     if (!baseUrl) {
-      alert("请先填写 Base URL");
+      alert("请先填写基础 URL");
       return;
     }
 
@@ -2041,7 +2041,7 @@ function CodexConfig({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label className="text-[10px]">Base URL</Label>
+              <Label className="text-[10px]">基础 URL</Label>
               <Input
                 value={customBaseUrl}
                 onChange={(e) => setCustomBaseUrl(e.target.value)}
@@ -2050,7 +2050,7 @@ function CodexConfig({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label className="text-[10px]">API Key</Label>
+              <Label className="text-[10px]">API 密钥</Label>
               <Input
                 type="password"
                 value={customApiKey}
@@ -2105,7 +2105,7 @@ function CodexConfig({
             {customQuotaProviderType === "newapi" && (
               <>
                 <div className="flex flex-col gap-2">
-                  <Label className="text-[10px]">Access Token</Label>
+                  <Label className="text-[10px]">访问令牌</Label>
                   <Input
                     type="password"
                     value={customQuotaAccessToken}
@@ -2179,7 +2179,7 @@ function CodexConfig({
           {/* Base URL */}
           {provider !== "official" && (
             <div className="flex flex-col gap-2">
-              <Label className="text-[11px]">Base URL</Label>
+              <Label className="text-[11px]">基础 URL</Label>
               <div className="flex gap-2">
                 <Input
                   value={baseUrl}
@@ -2202,7 +2202,7 @@ function CodexConfig({
 
           {/* API Key */}
           <div className="flex flex-col gap-2">
-            <Label className="text-[11px]">API Key</Label>
+            <Label className="text-[11px]">API 密钥</Label>
             <Input
               type="password"
               value={apiKey}

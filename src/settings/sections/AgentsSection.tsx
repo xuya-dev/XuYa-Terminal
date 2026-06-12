@@ -540,7 +540,7 @@ function CustomInstructionsBlock({ value }: { value: string }) {
       <div className="flex items-center justify-between">
         <Label>自定义指令</Label>
         {/* {savedTick > 0 ? (
-          <span className="text-[10px] text-muted-foreground">Saved</span>
+          <span className="text-[10px] text-muted-foreground">已保存</span>
         ) : null} */}
         {draft && (
           <Button size="xs" onClick={() => void setCustomInstructions(draft)}>

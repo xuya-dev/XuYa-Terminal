@@ -538,13 +538,13 @@ function SessionRow({
 function EmptyState({ onPick }: { onPick: (text: string) => void }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8 py-10 text-center">
-      <img src="/logo.png" alt="Terax" className="size-14 opacity-90" />
+      <img src="/logo.png" alt="XuYa Terminal" className="size-14 opacity-90" />
       <div className="space-y-1.5">
         <p className="text-[14px] font-semibold tracking-tight">
-          向 Terax 提问
+          向助手提问
         </p>
         <p className="max-w-[18rem] text-[11.5px] leading-relaxed text-muted-foreground">
-          Terax 可查看活动终端 -- 工作目录、最近命令和输出。
+          XuYa Terminal 可查看活动终端、工作目录、最近命令和输出。
         </p>
       </div>
       <div className="flex w-full flex-col gap-2.5">

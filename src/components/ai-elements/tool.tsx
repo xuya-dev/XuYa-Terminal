@@ -250,7 +250,7 @@ function ToolInput({ toolName, input }: { toolName: string; input: unknown }) {
   }
   return (
     <div className="space-y-1">
-      <div className="text-[10px] font-medium text-muted-foreground">Input</div>
+      <div className="text-[10px] font-medium text-muted-foreground">输入</div>
       <CodeBlockMini
         code={
           typeof input === "string" ? input : JSON.stringify(input, null, 2)

@@ -472,7 +472,7 @@ fn save_agent_custom_provider_inner(
     let api_key = clean_optional_text(request.api_key.as_deref())
         .or(existing_api_key)
         .or(current_config_api_key)
-        .ok_or_else(|| "API Key is required for custom providers".to_string())?;
+        .ok_or_else(|| "自定义服务商需要 API 密钥".to_string())?;
     let model = normalize_agent_model(tool, request.model.as_deref());
     let haiku_model = normalize_claude_role_model(tool, request.haiku_model.as_deref());
     let haiku_model_name = normalize_claude_role_model(tool, request.haiku_model_name.as_deref());
@@ -546,7 +546,7 @@ fn save_agent_builtin_provider_inner(
                     None
                 }
             })
-            .ok_or_else(|| "Base URL is required".to_string())?;
+            .ok_or_else(|| "基础 URL 必填".to_string())?;
         normalize_agent_base_url(tool, &raw_base_url)?
     };
 
@@ -557,7 +557,7 @@ fn save_agent_builtin_provider_inner(
         .or(existing_api_key)
         .unwrap_or_default();
     if provider_id != "official" && api_key.is_empty() {
-        return Err("API Key is required".to_string());
+        return Err("API 密钥必填".to_string());
     }
     let model = normalize_builtin_agent_model(tool, &provider_id, request.model.as_deref());
 
@@ -626,7 +626,7 @@ async fn fetch_agent_provider_models_inner(
                 None
             }
         })
-        .ok_or_else(|| "Base URL is required to fetch models".to_string())?;
+        .ok_or_else(|| "拉取模型前请填写基础 URL".to_string())?;
     let base_url = normalize_agent_base_url(tool, &raw_base_url)?;
     let api_key = clean_optional_text(request.api_key.as_deref())
         .or_else(|| {
@@ -638,7 +638,7 @@ async fn fetch_agent_provider_models_inner(
                 .and_then(|provider| clean_agent_api_key(tool, Some(provider.api_key.as_str())))
         })
         .or_else(|| current_agent_api_key(&home, tool, custom_id.as_deref()))
-        .ok_or_else(|| "API Key is required to fetch models".to_string())?;
+        .ok_or_else(|| "拉取模型前请填写 API 密钥".to_string())?;
 
     let (endpoint, models) = fetch_openai_compatible_models(&base_url, &api_key).await?;
     Ok(AgentModelFetchResult { endpoint, models })
@@ -716,7 +716,7 @@ fn apply_claude_provider_config(
                         .map(|provider| provider.base_url.clone())
                 })
                 .or_else(|| claude_known_provider_base_url(&provider_id).map(str::to_string))
-                .ok_or_else(|| "Claude base URL is required".to_string())?;
+                .ok_or_else(|| "Claude 基础 URL 必填".to_string())?;
             let base_url = normalize_claude_base_url(&raw_base_url)?;
             let api_key = clean_optional_text(request.api_key.as_deref())
                 .or_else(|| {
@@ -730,7 +730,7 @@ fn apply_claude_provider_config(
                     })
                 })
                 .or(existing_api_key)
-                .ok_or_else(|| "Claude API Key is required".to_string())?;
+                .ok_or_else(|| "Claude API 密钥必填".to_string())?;
             env.insert(
                 "ANTHROPIC_BASE_URL".to_string(),
                 Value::String(base_url.clone()),
@@ -999,7 +999,7 @@ fn apply_codex_provider_config(
                     .as_ref()
                     .map(|provider| provider.base_url.clone())
             })
-            .ok_or_else(|| "Codex base URL is required".to_string())?;
+            .ok_or_else(|| "Codex 基础 URL 必填".to_string())?;
         let base_url = normalize_codex_base_url(&raw_base_url)?;
         let api_key = clean_optional_text(request.api_key.as_deref())
             .or_else(|| {
@@ -1013,7 +1013,7 @@ fn apply_codex_provider_config(
                 })
             })
             .or(existing_api_key)
-            .ok_or_else(|| "Codex API Key is required".to_string())?;
+            .ok_or_else(|| "Codex API 密钥必填".to_string())?;
         let provider_name = stored_custom
             .as_ref()
             .map(|provider| provider.name.as_str())
@@ -2339,7 +2339,7 @@ fn normalize_quota_provider_type(value: Option<&str>) -> Option<String> {
 fn normalize_claude_base_url(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim().trim_end_matches('/').to_string();
     if trimmed.is_empty() {
-        return Err("Claude base URL is required".to_string());
+        return Err("Claude 基础 URL 必填".to_string());
     }
     let base = strip_suffix_ignore_ascii(&trimmed, "/v1/messages")
         .or_else(|| strip_suffix_ignore_ascii(&trimmed, "/messages"))
@@ -2351,7 +2351,7 @@ fn normalize_claude_base_url(raw: &str) -> Result<String, String> {
 fn normalize_codex_base_url(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim().trim_end_matches('/').to_string();
     if trimmed.is_empty() {
-        return Err("Codex base URL is required".to_string());
+        return Err("Codex 基础 URL 必填".to_string());
     }
     let mut base = strip_suffix_ignore_ascii(&trimmed, "/responses").unwrap_or(trimmed);
     if !base.to_ascii_lowercase().ends_with("/v1") {
@@ -2382,7 +2382,7 @@ fn codex_responses_endpoint(base_url: &str) -> String {
 
 fn openai_compatible_models_url(base_url: &str) -> Result<String, String> {
     let mut base = clean_optional_text(Some(base_url))
-        .ok_or_else(|| "Base URL is required to fetch models".to_string())?
+        .ok_or_else(|| "拉取模型前请填写基础 URL".to_string())?
         .trim_end_matches('/')
         .to_string();
     for suffix in [
