@@ -11,8 +11,8 @@ export type SelectionAskAiProps = {
   onDismiss: () => void;
 };
 
-const W = 110;
-const OFFSET = 32;
+const W = 152;
+const OFFSET = 36;
 
 export function SelectionAskAi({
   state,
@@ -45,7 +45,7 @@ export function SelectionAskAi({
       data-selection-ask-ai
       data-state={state}
       style={{ top: pos.current.top, left: pos.current.left, width: W }}
-      className="fixed z-50 duration-150 ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:slide-out-to-bottom-1"
+      className="fixed z-50 duration-150 ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-bottom-1 data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:slide-out-to-bottom-1"
     >
       <button
         type="button"
@@ -53,11 +53,11 @@ export function SelectionAskAi({
           e.stopPropagation();
           onAsk();
         }}
-        className="flex h-7 w-full items-center justify-between gap-1.5 rounded-md border border-border/60 bg-card/95 px-2 text-xs shadow-lg backdrop-blur-md hover:border-border hover:bg-accent"
+        className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-popover px-2.5 text-xs font-medium text-popover-foreground shadow-lg shadow-foreground/10 ring-1 ring-foreground/5 backdrop-blur-md hover:bg-accent hover:text-accent-foreground"
       >
-        <span>向 XuYa Terminal 提问</span>
-        <KbdGroup>
-          <Kbd className="h-4 min-w-4 px-1 text-[10px]">
+        <span className="min-w-0 shrink truncate whitespace-nowrap">向助手提问</span>
+        <KbdGroup className="shrink-0">
+          <Kbd className="h-4 min-w-4 rounded px-1 text-[10px] text-muted-foreground">
             {fmtShortcut(MOD_KEY, "L")}
           </Kbd>
         </KbdGroup>
