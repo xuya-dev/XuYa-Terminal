@@ -194,7 +194,7 @@ function installLightTerminalBackgroundObserver(slot: Slot): void {
   if (!root || typeof MutationObserver === "undefined") return;
   slot.lightBgObserver?.disconnect();
   const observer = new MutationObserver((mutations) => {
-    syncLightTerminalBackgroundMutations(root, mutations);
+    syncLightTerminalBackgroundMutations(mutations);
   });
   observer.observe(root, {
     subtree: true,
@@ -206,10 +206,7 @@ function installLightTerminalBackgroundObserver(slot: Slot): void {
   syncLightTerminalBackgrounds(root);
 }
 
-function syncLightTerminalBackgroundMutations(
-  root: HTMLElement,
-  mutations: MutationRecord[],
-): void {
+function syncLightTerminalBackgroundMutations(mutations: MutationRecord[]): void {
   if (!isLightMode()) return;
   for (const mutation of mutations) {
     if (mutation.type === "attributes") {
