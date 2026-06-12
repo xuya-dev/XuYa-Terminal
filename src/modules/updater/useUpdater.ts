@@ -2,7 +2,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useCallback, useEffect, useState } from "react";
-import { IS_LINUX } from "@/lib/platform";
+import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 
 const LAST_CHECK_KEY = "xuya:updater:last-check";
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -101,7 +101,7 @@ export function useUpdater({ autoCheck = true }: HookOptions = {}) {
         }
         return;
       }
-      const update = await check();
+      const update = await check(IS_WINDOWS ? { target: "windows-x86_64" } : undefined);
       if (update) {
         setStatus({ kind: "available", update });
       } else {

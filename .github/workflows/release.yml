@@ -28,7 +28,7 @@ jobs:
             args: ""
             rust-target: ""
           - platform: windows-latest
-            args: ""
+            args: --bundles msi
             rust-target: ""
 
     runs-on: ${{ matrix.platform }}
@@ -81,3 +81,72 @@ jobs:
           prerelease: false
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+  sanitize-windows-updater:
+    name: Sanitize Windows updater manifest
+    runs-on: ubuntu-22.04
+    needs: publish-tauri
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-manifest
+          gh release download "${GITHUB_REF_NAME}" \
+            --pattern latest.json \
+            --dir release-manifest
+
+      - name: Prefer MSI for Windows updates
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const path = "release-manifest/latest.json";
+          const manifest = JSON.parse(fs.readFileSync(path, "utf8"));
+          if (!manifest.platforms || typeof manifest.platforms !== "object") {
+            throw new Error("latest.json is missing the platforms object");
+          }
+
+          const platforms = manifest.platforms;
+          if (platforms["windows-x86_64-msi"]) {
+            platforms["windows-x86_64"] = platforms["windows-x86_64-msi"];
+          }
+          delete platforms["windows-x86_64-nsis"];
+
+          const windows = platforms["windows-x86_64"];
+          if (!windows || typeof windows !== "object") {
+            throw new Error("latest.json is missing windows-x86_64 after MSI sanitization");
+          }
+          if (String(windows.url || "").toLowerCase().includes("setup.exe")) {
+            throw new Error("windows-x86_64 still points to the NSIS setup.exe");
+          }
+
+          fs.writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+          NODE
+
+      - name: Upload sanitized updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" release-manifest/latest.json --clobber
+
+      - name: Delete stale NSIS release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mapfile -t asset_ids < <(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+              --jq '.assets[] | select(.name | ascii_downcase | test("(_x64-setup\\.exe(\\.sig)?$|nsis)")) | .id'
+          )
+
+          for asset_id in "${asset_ids[@]}"; do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+          done

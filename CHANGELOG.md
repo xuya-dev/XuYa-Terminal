@@ -8,6 +8,7 @@
 - 版本号提升至 `1.0.0`，作为首个多系统发布版本。
 - GitHub Actions 发布流程扩展为 Windows、macOS 和 Linux 构建矩阵，并继续生成 Tauri updater 所需的 `latest.json`。
 - Windows 自动更新优先使用 MSI 更新包，避免旧版自定义安装目录迁移到用户目录。
+- 发布后清理 Windows updater 清单中的 NSIS 入口，确保已安装用户不会被 `windows-x86_64-nsis` 引导到 LocalAppData。
 
 ## [0.1.8] - 2026-06-05
 
