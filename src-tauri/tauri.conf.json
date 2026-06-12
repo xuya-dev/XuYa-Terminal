@@ -75,7 +75,6 @@
         "type": "downloadBootstrapper"
       },
       "nsis": {
-        "installMode": "currentUser",
         "languages": [
           "English"
         ],
