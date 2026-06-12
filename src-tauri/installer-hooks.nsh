@@ -2,7 +2,23 @@
 ; HKCU keeps the Explorer integration per-user. %V = clicked path.
 ; NoWorkingDirectory keeps Explorer from overriding %V (System32 on Drive).
 
+!macro NSIS_HOOK_PREINSTALL
+  ${If} $UpdateMode = 1
+    ReadRegStr $R0 HKCU "Software\xuya\XuYa Terminal" ""
+    ${If} $R0 != ""
+    ${AndIf} ${FileExists} "$R0\*.*"
+      StrCpy $INSTDIR "$R0"
+      SetOutPath "$INSTDIR"
+      WriteRegStr HKCU "Software\YuanXu\XuYa Terminal" "" "$INSTDIR"
+      WriteRegStr HKCU "Software\xuya\XuYa Terminal" "" "$INSTDIR"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
+  WriteRegStr HKCU "Software\YuanXu\XuYa Terminal" "" "$INSTDIR"
+  WriteRegStr HKCU "Software\xuya\XuYa Terminal" "" "$INSTDIR"
+
   DeleteRegKey HKCU "Software\Classes\Directory\shell\OpenInTerax"
   DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\OpenInTerax"
   DeleteRegKey HKCU "Software\Classes\Drive\shell\OpenInTerax"
