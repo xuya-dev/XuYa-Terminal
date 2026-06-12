@@ -233,6 +233,173 @@ html[data-chrome="borderless"][data-maximized] #settings-root {
 .xterm.focus {
   outline: none !important;
 }
+html.light .xterm .xterm-viewport,
+html.light .xterm .xterm-screen,
+html.light .xterm .xterm-rows {
+  background-color: var(--terminal-background) !important;
+}
+/* xterm renders reverse-video default colors as fg/bg pair 257. Agent CLIs
+ * such as Codex also use dark inline RGB backgrounds for prompt rows. In light
+ * mode those rows read as broken black bars, so neutralize dark terminal
+ * backgrounds at style resolution time rather than after render. */
+html.light .xterm :is(
+  .xterm-bg-0,
+  .xterm-bg-8,
+  .xterm-bg-232,
+  .xterm-bg-233,
+  .xterm-bg-234,
+  .xterm-bg-235,
+  .xterm-bg-236,
+  .xterm-bg-237,
+  .xterm-bg-238,
+  .xterm-bg-239,
+  .xterm-bg-240,
+  .xterm-bg-241,
+  .xterm-bg-242,
+  .xterm-bg-243,
+  .xterm-bg-257
+) {
+  background-color: var(--muted) !important;
+}
+html.light .xterm .xterm-rows span:is(
+  [style*="background-color:#0"],
+  [style*="background-color: #0"],
+  [style*="background-color:#1"],
+  [style*="background-color: #1"],
+  [style*="background-color:#20"],
+  [style*="background-color: #20"],
+  [style*="background-color:#21"],
+  [style*="background-color: #21"],
+  [style*="background-color:#22"],
+  [style*="background-color: #22"],
+  [style*="background-color:#23"],
+  [style*="background-color: #23"],
+  [style*="background-color:#24"],
+  [style*="background-color: #24"],
+  [style*="background-color:#25"],
+  [style*="background-color: #25"],
+  [style*="background-color:#26"],
+  [style*="background-color: #26"],
+  [style*="background-color:#27"],
+  [style*="background-color: #27"],
+  [style*="background-color:#28"],
+  [style*="background-color: #28"],
+  [style*="background-color:#29"],
+  [style*="background-color: #29"],
+  [style*="background-color:#2a"],
+  [style*="background-color: #2a"],
+  [style*="background-color:#2b"],
+  [style*="background-color: #2b"],
+  [style*="background-color:#2c"],
+  [style*="background-color: #2c"],
+  [style*="background-color:#2d"],
+  [style*="background-color: #2d"],
+  [style*="background-color:#2e"],
+  [style*="background-color: #2e"],
+  [style*="background-color:#2f"],
+  [style*="background-color: #2f"],
+  [style*="background-color:#30"],
+  [style*="background-color: #30"],
+  [style*="background-color:#31"],
+  [style*="background-color: #31"],
+  [style*="background-color:#32"],
+  [style*="background-color: #32"],
+  [style*="background-color:#33"],
+  [style*="background-color: #33"],
+  [style*="background-color:#34"],
+  [style*="background-color: #34"],
+  [style*="background-color:#35"],
+  [style*="background-color: #35"],
+  [style*="background-color:#363636"],
+  [style*="background-color: #363636"],
+  [style*="background-color:#373737"],
+  [style*="background-color: #373737"],
+  [style*="background-color:#383838"],
+  [style*="background-color: #383838"],
+  [style*="background-color:#393939"],
+  [style*="background-color: #393939"],
+  [style*="background-color:#3a3a3a"],
+  [style*="background-color: #3a3a3a"],
+  [style*="background-color:#3b3b3b"],
+  [style*="background-color: #3b3b3b"],
+  [style*="background-color:#3c3c3c"],
+  [style*="background-color: #3c3c3c"],
+  [style*="background-color:#3d3d3d"],
+  [style*="background-color: #3d3d3d"],
+  [style*="background-color:#3e3e3e"],
+  [style*="background-color: #3e3e3e"],
+  [style*="background-color:#3f3f3f"],
+  [style*="background-color: #3f3f3f"],
+  [style*="background-color:#404040"],
+  [style*="background-color: #404040"],
+  [style*="background-color:#414141"],
+  [style*="background-color: #414141"],
+  [style*="background-color:#424242"],
+  [style*="background-color: #424242"],
+  [style*="background-color:#434343"],
+  [style*="background-color: #434343"],
+  [style*="background-color:#444444"],
+  [style*="background-color: #444444"],
+  [style*="background-color:#454545"],
+  [style*="background-color: #454545"],
+  [style*="background-color:#464646"],
+  [style*="background-color: #464646"],
+  [style*="background-color:#474747"],
+  [style*="background-color: #474747"],
+  [style*="background-color:#484848"],
+  [style*="background-color: #484848"],
+  [style*="background-color:rgb(15,"],
+  [style*="background-color: rgb(15,"],
+  [style*="background-color:rgb(17,"],
+  [style*="background-color: rgb(17,"],
+  [style*="background-color:rgb(24,"],
+  [style*="background-color: rgb(24,"],
+  [style*="background-color:rgb(30,"],
+  [style*="background-color: rgb(30,"],
+  [style*="background-color:rgb(31,"],
+  [style*="background-color: rgb(31,"],
+  [style*="background-color:rgb(39,"],
+  [style*="background-color: rgb(39,"],
+  [style*="background-color:rgb(51,"],
+  [style*="background-color: rgb(51,"]
+) {
+  background-color: var(--muted) !important;
+  color: var(--foreground) !important;
+}
+html.light .xterm .xterm-rows span[data-terax-light-terminal-bg] {
+  background-color: var(--muted) !important;
+  color: var(--foreground) !important;
+}
+html.light .xterm .xterm-fg-257 {
+  color: var(--foreground) !important;
+}
+html.light .xterm .xterm-fg-257.xterm-dim {
+  color: var(--muted-foreground) !important;
+}
+html.light .xterm .composition-view {
+  background: var(--muted) !important;
+  color: var(--foreground) !important;
+  border: 1px solid var(--border);
+}
+html.light .xterm.xterm .xterm-rows .xterm-cursor.xterm-cursor-block,
+html.light
+  .xterm.xterm
+  .xterm-rows
+  .xterm-cursor.xterm-cursor-block:not(.xterm-cursor-blink) {
+  animation: none !important;
+  background-color: transparent !important;
+  color: inherit !important;
+  outline: 1px solid var(--foreground) !important;
+  outline-offset: -1px !important;
+}
+html.light .xterm.xterm .xterm-rows .xterm-cursor.xterm-cursor-bar {
+  animation: none !important;
+  box-shadow: 1px 0 0 var(--foreground) inset !important;
+}
+html.light .xterm.xterm .xterm-rows .xterm-cursor.xterm-cursor-underline {
+  animation: none !important;
+  border-bottom-color: var(--foreground) !important;
+}
 
 .cm-editor,
 .cm-scroller {

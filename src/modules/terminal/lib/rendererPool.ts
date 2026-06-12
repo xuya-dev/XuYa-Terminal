@@ -60,6 +60,7 @@ export type Slot = {
   ptyTimer: ReturnType<typeof setTimeout> | null;
   webglReapTimer: ReturnType<typeof setTimeout> | null;
   slotReapTimer: ReturnType<typeof setTimeout> | null;
+  lightBgObserver: MutationObserver | null;
   unhideRaf: number | null;
   lastCols: number;
   lastRows: number;
@@ -157,13 +158,162 @@ function getRecycler(): HTMLDivElement {
   return el;
 }
 
-const MCR_BG_ACTIVE = 4.5;
-const MCR_BG_INACTIVE = 1;
+const MCR_HIGH_CONTRAST = 4.5;
+const MCR_DEFAULT = 1;
+const LIGHT_TERMINAL_BG_ATTR = "data-terax-light-terminal-bg";
+
+function isLightMode(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("light")
+  );
+}
 
 function bgActive(
   prefs: ReturnType<typeof usePreferencesStore.getState>,
 ): boolean {
   return prefs.backgroundKind === "image" && !!prefs.backgroundImageId;
+}
+
+function terminalMinimumContrastRatio(
+  prefs: ReturnType<typeof usePreferencesStore.getState>,
+): number {
+  // Agent CLIs often paint dark ANSI blocks without an explicit foreground.
+  // In light mode xterm would inherit a dark foreground, so let xterm lift it.
+  return bgActive(prefs) || isLightMode() ? MCR_HIGH_CONTRAST : MCR_DEFAULT;
+}
+
+function shouldUseWebgl(): boolean {
+  return (
+    !isLightMode() && usePreferencesStore.getState().terminalWebglEnabled
+  );
+}
+
+function installLightTerminalBackgroundObserver(slot: Slot): void {
+  const root = slot.term.element;
+  if (!root || typeof MutationObserver === "undefined") return;
+  slot.lightBgObserver?.disconnect();
+  const observer = new MutationObserver((mutations) => {
+    syncLightTerminalBackgroundMutations(root, mutations);
+  });
+  observer.observe(root, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["style"],
+  });
+  slot.lightBgObserver = observer;
+  syncLightTerminalBackgrounds(root);
+}
+
+function syncLightTerminalBackgroundMutations(
+  root: HTMLElement,
+  mutations: MutationRecord[],
+): void {
+  if (!isLightMode()) return;
+  for (const mutation of mutations) {
+    if (mutation.type === "attributes") {
+      syncLightTerminalBackgroundElement(mutation.target);
+      continue;
+    }
+    for (const node of mutation.addedNodes) {
+      syncLightTerminalBackgroundElement(node);
+      if (node instanceof HTMLElement) {
+        const spans = node.querySelectorAll<HTMLElement>(
+          `span[style*="background-color"], span[${LIGHT_TERMINAL_BG_ATTR}]`,
+        );
+        for (const span of spans) syncLightTerminalBackgroundElement(span);
+      }
+    }
+  }
+}
+
+function syncLightTerminalBackgrounds(root: HTMLElement): void {
+  const targets = root.querySelectorAll<HTMLElement>(
+    `span[style*="background-color"], span[${LIGHT_TERMINAL_BG_ATTR}]`,
+  );
+  if (!isLightMode()) {
+    clearLightTerminalBackgrounds(root);
+    return;
+  }
+  for (const target of targets) syncLightTerminalBackgroundElement(target);
+}
+
+function clearLightTerminalBackgrounds(root: HTMLElement): void {
+  const targets = root.querySelectorAll<HTMLElement>(
+    `span[${LIGHT_TERMINAL_BG_ATTR}]`,
+  );
+  for (const target of targets) target.removeAttribute(LIGHT_TERMINAL_BG_ATTR);
+}
+
+function syncLightTerminalBackgroundElement(node: Node): void {
+  if (!(node instanceof HTMLElement) || node.tagName !== "SPAN") return;
+  const background = node.style.backgroundColor;
+  if (isDarkInlineTerminalBackground(background)) {
+    node.setAttribute(LIGHT_TERMINAL_BG_ATTR, "dark");
+  } else {
+    node.removeAttribute(LIGHT_TERMINAL_BG_ATTR);
+  }
+}
+
+function isDarkInlineTerminalBackground(value: string): boolean {
+  const color = parseCssColor(value);
+  if (!color || color.a < 0.85) return false;
+  const luminance =
+    0.2126 * srgbToLinear(color.r) +
+    0.7152 * srgbToLinear(color.g) +
+    0.0722 * srgbToLinear(color.b);
+  return luminance < 0.2;
+}
+
+function parseCssColor(
+  value: string,
+): { r: number; g: number; b: number; a: number } | null {
+  const color = value.trim().toLowerCase();
+  if (!color || color === "transparent") return null;
+
+  const rgb = /^rgba?\((.+)\)$/.exec(color);
+  if (rgb) {
+    const parts = rgb[1]
+      .replace(/\s*\/\s*/, " ")
+      .split(/[\s,]+/)
+      .filter(Boolean);
+    if (parts.length < 3) return null;
+    return {
+      r: parseCssColorChannel(parts[0]),
+      g: parseCssColorChannel(parts[1]),
+      b: parseCssColorChannel(parts[2]),
+      a: parts[3] === undefined ? 1 : Number.parseFloat(parts[3]),
+    };
+  }
+
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/.exec(color);
+  if (!hex) return null;
+  const raw =
+    hex[1].length === 3
+      ? hex[1]
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : hex[1];
+  return {
+    r: Number.parseInt(raw.slice(0, 2), 16),
+    g: Number.parseInt(raw.slice(2, 4), 16),
+    b: Number.parseInt(raw.slice(4, 6), 16),
+    a: 1,
+  };
+}
+
+function parseCssColorChannel(value: string): number {
+  const n = Number.parseFloat(value);
+  if (!Number.isFinite(n)) return 0;
+  const v = value.endsWith("%") ? (n / 100) * 255 : n;
+  return Math.max(0, Math.min(255, v));
+}
+
+function srgbToLinear(value: number): number {
+  const c = value / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 }
 
 function termOptions() {
@@ -178,12 +328,13 @@ function termOptions() {
     cursorInactiveStyle: "outline" as const,
     scrollback: prefs.terminalScrollback,
     allowProposedApi: true,
-    minimumContrastRatio: bgActive(prefs) ? MCR_BG_ACTIVE : MCR_BG_INACTIVE,
+    minimumContrastRatio: terminalMinimumContrastRatio(prefs),
   };
 }
 
 export function applyBackgroundActive(active: boolean): void {
-  const value = active ? MCR_BG_ACTIVE : MCR_BG_INACTIVE;
+  const value =
+    active || isLightMode() ? MCR_HIGH_CONTRAST : MCR_DEFAULT;
   for (const slot of slots) {
     if (slot.term.options.minimumContrastRatio === value) continue;
     slot.term.options.minimumContrastRatio = value;
@@ -226,6 +377,7 @@ function createSlot(): Slot {
     ptyTimer: null,
     webglReapTimer: null,
     slotReapTimer: null,
+    lightBgObserver: null,
     unhideRaf: null,
     lastCols: term.cols,
     lastRows: term.rows,
@@ -301,6 +453,7 @@ function createSlot(): Slot {
     if (leafId === null) return;
     adapter?.resolveLeaf(leafId)?.writeToPty(data);
   });
+  installLightTerminalBackgroundObserver(slot);
 
   slots.push(slot);
   return slot;
@@ -735,6 +888,8 @@ function disposeSlot(slot: Slot): void {
   slot.ptyTimer = null;
   slot.observer?.disconnect();
   slot.observer = null;
+  slot.lightBgObserver?.disconnect();
+  slot.lightBgObserver = null;
   for (const d of slot.oscDisposers) {
     try {
       d();
@@ -762,7 +917,7 @@ const IDLE_SLOTS_KEEP_WARM = 1;
 
 function attachWebgl(slot: Slot): void {
   if (slot.webglAddon || !slot.term.element) return;
-  if (!usePreferencesStore.getState().terminalWebglEnabled) return;
+  if (!shouldUseWebgl()) return;
   const elem = slot.term.element;
   const before = new Set<HTMLCanvasElement>(
     elem.querySelectorAll<HTMLCanvasElement>("canvas"),
@@ -784,7 +939,7 @@ function attachWebgl(slot: Slot): void {
       setTimeout(() => {
         if (slot.webglAddon || slot.currentLeafId === null || slot.parked)
           return;
-        if (!usePreferencesStore.getState().terminalWebglEnabled) return;
+        if (!shouldUseWebgl()) return;
         attachWebgl(slot);
         if (slot.webglAddon) {
           try {
@@ -857,8 +1012,9 @@ function releaseCanvasContext(canvas: HTMLCanvasElement): void {
 }
 
 export function applyWebglPreference(enabled: boolean): void {
+  const allowWebgl = enabled && shouldUseWebgl();
   for (const slot of slots) {
-    if (enabled) {
+    if (allowWebgl) {
       if (slot.currentLeafId !== null && !slot.parked && !slot.webglAddon) {
         attachWebgl(slot);
         if (slot.webglAddon) {
@@ -922,9 +1078,26 @@ export function applyScrollback(value: number): void {
 }
 
 export function applyTheme(): void {
+  const allowWebgl = shouldUseWebgl();
   const theme = buildTerminalTheme();
+  const contrast = terminalMinimumContrastRatio(usePreferencesStore.getState());
   for (const slot of slots) {
     slot.term.options.theme = theme;
+    if (slot.term.options.minimumContrastRatio !== contrast) {
+      slot.term.options.minimumContrastRatio = contrast;
+    }
+    if (!allowWebgl && slot.webglAddon) {
+      cancelWebglReap(slot);
+      disposeSlotWebgl(slot);
+    } else if (
+      allowWebgl &&
+      slot.currentLeafId !== null &&
+      !slot.parked &&
+      !slot.webglAddon
+    ) {
+      attachWebgl(slot);
+    }
+    if (slot.term.element) syncLightTerminalBackgrounds(slot.term.element);
   }
 }
 
@@ -977,7 +1150,7 @@ export function refreshLeafSlot(leafId: number): void {
   if (!slot) return;
   cancelWebglReap(slot);
   unparkSlotHost(slot);
-  if (usePreferencesStore.getState().terminalWebglEnabled && !slot.webglAddon) {
+  if (shouldUseWebgl() && !slot.webglAddon) {
     attachWebgl(slot);
   }
   // The observer skips parked slots; catch up on container resizes here.

@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -131,7 +132,7 @@ export function ThemeProvider({ children, defaultMode = "system" }: ThemeProvide
   const resolvedMode: "dark" | "light" =
     mode === "system" ? (systemDark ? "dark" : "light") : mode;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement;
     root.classList.remove("light", "dark");
     root.classList.add(resolvedMode);
