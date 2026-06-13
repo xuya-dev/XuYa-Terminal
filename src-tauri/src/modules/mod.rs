@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod agent_config;
+pub mod agent_session;
 pub mod fs;
 pub mod git;
 pub mod history;

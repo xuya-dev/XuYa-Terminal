@@ -1,6 +1,8 @@
 pub mod modules;
 
-use modules::{agent, agent_config, fs, git, history, net, pty, secrets, shell, workspace};
+use modules::{
+    agent, agent_config, agent_session, fs, git, history, net, pty, secrets, shell, workspace,
+};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_window_state::StateFlags;
@@ -202,6 +204,7 @@ pub fn run() {
             agent_config::delete_agent_custom_provider,
             agent_config::fetch_agent_provider_models,
             agent_config::fetch_agent_provider_quota,
+            agent_session::find_latest_agent_session,
             secrets::secrets_get,
             secrets::secrets_set,
             secrets::secrets_delete,

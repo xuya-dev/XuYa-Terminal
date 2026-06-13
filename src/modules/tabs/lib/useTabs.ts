@@ -5,6 +5,7 @@ import {
   leafIds,
   nextLeafId,
   removeLeaf,
+  setLeafAgentSession as setLeafAgentSessionInTree,
   setLeafCwd as setLeafCwdInTree,
   siblingLeafOf,
   splitLeaf,
@@ -852,6 +853,30 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     });
   }, []);
 
+  /** Bind (or clear) the agent session id on a leaf so its tab can resume the
+   * conversation when reopened. Found by leaf id across all tabs; bails out
+   * without setTabs when nothing changes (capture polls fire repeatedly). */
+  const setLeafAgentSession = useCallback(
+    (leafId: number, agentSessionId: string | undefined) => {
+      setTabs((curr) => {
+        let changed = false;
+        const next = curr.map((t) => {
+          if (t.kind !== "terminal" || !hasLeaf(t.paneTree, leafId)) return t;
+          const paneTree = setLeafAgentSessionInTree(
+            t.paneTree,
+            leafId,
+            agentSessionId,
+          );
+          if (paneTree === t.paneTree) return t;
+          changed = true;
+          return { ...t, paneTree };
+        });
+        return changed ? next : curr;
+      });
+    },
+    [],
+  );
+
   const focusPane = useCallback((tabId: number, leafId: number) => {
     setTabs((curr) =>
       curr.map((t) => {
@@ -1025,6 +1050,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     updateTab,
     selectByIndex,
     setLeafCwd,
+    setLeafAgentSession,
     focusPane,
     focusNextPaneInTab,
     splitActivePane,

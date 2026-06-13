@@ -6,6 +6,7 @@ import {
 import type { SearchAddon } from "@xterm/addon-search";
 import { Fragment } from "react";
 import { useTerminalDropStore } from "./lib/dropStore";
+import type { AgentType } from "./lib/agentResume";
 import { leafIds, type PaneNode } from "./lib/panes";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 
@@ -14,6 +15,7 @@ type LeafBundle = {
   onSearchReady: (leafId: number, addon: SearchAddon) => void;
   onCwd: (leafId: number, cwd: string) => void;
   onExit: (leafId: number, code: number) => void;
+  onSessionCaptured: (leafId: number, sessionId: string) => void;
 };
 
 type Props = {
@@ -21,6 +23,7 @@ type Props = {
   tabVisible: boolean;
   activeLeafId: number;
   blocks: boolean;
+  agentType?: AgentType;
   onFocusLeaf: (leafId: number) => void;
   getBundle: (leafId: number) => LeafBundle;
 };
@@ -28,7 +31,8 @@ type Props = {
 export function PaneTreeView(props: Props) {
   const { node } = props;
   if (node.kind === "leaf") {
-    const { tabVisible, activeLeafId, blocks, onFocusLeaf, getBundle } = props;
+    const { tabVisible, activeLeafId, blocks, agentType, onFocusLeaf, getBundle } =
+      props;
     const focused = node.id === activeLeafId;
     const b = getBundle(node.id);
     return (
@@ -50,10 +54,13 @@ export function PaneTreeView(props: Props) {
           focused={focused}
           initialCwd={node.cwd}
           blocks={blocks}
+          agentType={agentType}
+          agentSessionId={node.agentSessionId}
           ref={b.setRef}
           onSearchReady={b.onSearchReady}
           onCwd={b.onCwd}
           onExit={b.onExit}
+          onSessionCaptured={b.onSessionCaptured}
         />
         <DropOverlay leafId={node.id} />
       </div>

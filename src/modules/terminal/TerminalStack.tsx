@@ -14,6 +14,8 @@ type Props = {
   onSearchReady: (leafId: number, addon: SearchAddon) => void;
   onCwd: (leafId: number, cwd: string) => void;
   onExit: (leafId: number, code: number) => void;
+  /** Persist a discovered agent session id onto the leaf (capture/fork tracking). */
+  onSessionCaptured: (leafId: number, sessionId: string) => void;
   onFocusLeaf: (tabId: number, leafId: number) => void;
 };
 
@@ -22,6 +24,7 @@ type Bundle = {
   onSearchReady: (leafId: number, addon: SearchAddon) => void;
   onCwd: (leafId: number, cwd: string) => void;
   onExit: (leafId: number, code: number) => void;
+  onSessionCaptured: (leafId: number, sessionId: string) => void;
 };
 
 export function TerminalStack({
@@ -31,6 +34,7 @@ export function TerminalStack({
   onSearchReady,
   onCwd,
   onExit,
+  onSessionCaptured,
   onFocusLeaf,
 }: Props) {
   const terminals = useMemo(() => selectLiveTerminals(tabs), [tabs]);
@@ -39,6 +43,7 @@ export function TerminalStack({
   const searchReadyRef = useRef(onSearchReady);
   const cwdRef = useRef(onCwd);
   const exitRef = useRef(onExit);
+  const sessionCapturedRef = useRef(onSessionCaptured);
   useEffect(() => {
     registerRef.current = registerHandle;
   }, [registerHandle]);
@@ -51,6 +56,9 @@ export function TerminalStack({
   useEffect(() => {
     exitRef.current = onExit;
   }, [onExit]);
+  useEffect(() => {
+    sessionCapturedRef.current = onSessionCaptured;
+  }, [onSessionCaptured]);
 
   const bundles = useRef(new Map<number, Bundle>());
   const getBundle = (leafId: number): Bundle => {
@@ -61,6 +69,7 @@ export function TerminalStack({
         onSearchReady: (id, addon) => searchReadyRef.current(id, addon),
         onCwd: (id, cwd) => cwdRef.current(id, cwd),
         onExit: (id, code) => exitRef.current(id, code),
+        onSessionCaptured: (id, sid) => sessionCapturedRef.current(id, sid),
       };
       bundles.current.set(leafId, b);
     }
@@ -95,6 +104,7 @@ export function TerminalStack({
               tabVisible={tabVisible}
               activeLeafId={t.activeLeafId}
               blocks={t.blocks ?? false}
+              agentType={t.agentType}
               onFocusLeaf={(leafId) => onFocusLeaf(t.id, leafId)}
               getBundle={getBundle}
             />

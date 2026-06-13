@@ -74,6 +74,7 @@ import {
   whenSessionReady,
   writeToSession,
 } from "@/modules/terminal";
+import { launchAgentInLeaf } from "@/modules/terminal/lib/launchAgent";
 import {
   SpaceSwitcher,
   useSpaces,
@@ -126,6 +127,7 @@ export default function App() {
     updateTab,
     selectByIndex,
     setLeafCwd,
+    setLeafAgentSession,
     focusPane,
     focusNextPaneInTab,
     splitActivePane,
@@ -497,34 +499,35 @@ export default function App() {
         agentTitle = "Open Code";
       }
 
-      // Create agent tab with custom title and icon
-      let leafId: number;
       if (agentType) {
-        const result = newAgentTab(cwd, agentTitle, agentType);
-        leafId = result.leafId;
-      } else {
-        const tabId = newTab(cwd);
-        const tab = tabsRef.current.find((x) => x.id === tabId);
-        leafId = tab?.kind === "terminal" ? tab.activeLeafId : 0;
+        // Agent tab: launch the agent and capture its session id so the tab can
+        // resume the same conversation next time it's reopened.
+        const { leafId } = newAgentTab(cwd, agentTitle, agentType);
+        await launchAgentInLeaf(leafId, agentType, {
+          cwd: cwd ?? null,
+          onSessionCaptured: (id) => setLeafAgentSession(leafId, id),
+        });
+        setTimeout(() => {
+          terminalRefs.current.get(leafId)?.focus();
+        }, 50);
+        return;
       }
 
-      // Wait for the session to be ready (PTY initialized)
+      // Plain shell session (PowerShell / CMD / ...).
+      const tabId = newTab(cwd);
+      const tab = tabsRef.current.find((x) => x.id === tabId);
+      const leafId = tab?.kind === "terminal" ? tab.activeLeafId : 0;
       try {
         await whenSessionReady(leafId, 5000);
       } catch (e) {
         console.warn("[launchSession] Session ready timeout:", e);
       }
-
-      // Use submitToLeaf which handles the command properly
-      // It adds \r at the end to execute the command
       submitToLeaf(leafId, command);
-
-      // Focus the terminal
       setTimeout(() => {
         terminalRefs.current.get(leafId)?.focus();
       }, 50);
     },
-    [newTab, newAgentTab, inheritedCwdForNewTab],
+    [newTab, newAgentTab, inheritedCwdForNewTab, setLeafAgentSession],
   );
 
   const handleOpenFile = useCallback(
@@ -1150,6 +1153,9 @@ export default function App() {
                       onCwd={handleTerminalCwd}
                       onExit={handleLeafExit}
                       onFocusLeaf={handleFocusLeaf}
+                      onSessionCaptured={(leafId, id) =>
+                        setLeafAgentSession(leafId, id)
+                      }
                       registerEditorHandle={registerEditorHandle}
                       onEditorDirtyChange={handleEditorDirty}
                       onEditorCloseTab={disposeTab}

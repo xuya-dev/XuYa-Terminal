@@ -3,7 +3,7 @@ export type PaneId = number;
 export type SplitDir = "row" | "col";
 
 export type PaneNode =
-  | { kind: "leaf"; id: PaneId; cwd?: string }
+  | { kind: "leaf"; id: PaneId; cwd?: string; agentSessionId?: string }
   | {
       kind: "split";
       id: PaneId;
@@ -31,6 +31,18 @@ export function findLeafCwd(n: PaneNode, id: PaneId): string | undefined {
   return undefined;
 }
 
+export function findLeafAgentSession(
+  n: PaneNode,
+  id: PaneId,
+): string | undefined {
+  if (isLeaf(n)) return n.id === id ? n.agentSessionId : undefined;
+  for (const c of n.children) {
+    const found = findLeafAgentSession(c, id);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 export function setLeafCwd(
   n: PaneNode,
   id: PaneId,
@@ -43,6 +55,25 @@ export function setLeafCwd(
   let changed = false;
   const next = n.children.map((c) => {
     const u = setLeafCwd(c, id, cwd);
+    if (u !== c) changed = true;
+    return u;
+  });
+  return changed ? { ...n, children: next } : n;
+}
+
+/** Bind/unbind an agent session id on a leaf (used for resume-on-reopen). */
+export function setLeafAgentSession(
+  n: PaneNode,
+  id: PaneId,
+  agentSessionId: string | undefined,
+): PaneNode {
+  if (isLeaf(n)) {
+    if (n.id !== id || n.agentSessionId === agentSessionId) return n;
+    return { ...n, agentSessionId };
+  }
+  let changed = false;
+  const next = n.children.map((c) => {
+    const u = setLeafAgentSession(c, id, agentSessionId);
     if (u !== c) changed = true;
     return u;
   });

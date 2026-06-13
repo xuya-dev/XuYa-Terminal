@@ -9,6 +9,8 @@ import {
   useState,
 } from "react";
 import { BlockOverlay } from "./block/BlockOverlay";
+import type { AgentType } from "./lib/agentResume";
+import { launchAgentInLeaf } from "./lib/launchAgent";
 import { focusLeafInput, useTerminalSession } from "./lib/useTerminalSession";
 
 export type TerminalPaneHandle = {
@@ -28,9 +30,15 @@ type Props = {
   initialCwd?: string;
   /** Enable command-block decorations (OSC 133) for this terminal. */
   blocks?: boolean;
+  /** Agent type bound to this leaf's tab (for resume-on-reopen). */
+  agentType?: AgentType;
+  /** Persisted agent session id — present means this is a restored leaf. */
+  agentSessionId?: string;
   onSearchReady?: (leafId: number, addon: SearchAddon) => void;
   onExit?: (leafId: number, code: number) => void;
   onCwd?: (leafId: number, cwd: string) => void;
+  /** Persist a discovered agent session id (fork tracking on resume). */
+  onSessionCaptured?: (leafId: number, sessionId: string) => void;
 };
 
 export const TerminalPane = memo(
@@ -41,9 +49,12 @@ export const TerminalPane = memo(
       focused = true,
       initialCwd,
       blocks = false,
+      agentType,
+      agentSessionId,
       onSearchReady,
       onExit,
       onCwd,
+      onSessionCaptured,
     },
     ref,
   ) {
@@ -79,6 +90,23 @@ export const TerminalPane = memo(
       }),
       [session],
     );
+
+    const agentRestoreStartedRef = useRef(false);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once resume — only first-mount values matter
+    useEffect(() => {
+      // A restored agent leaf (agentType + bound session id at mount) reopens its
+      // conversation. New leaves have no session id at mount (launchSession owns
+      // them); skipping here avoids a double launch once capture later fills the
+      // id. The ref gate makes this fire exactly once even under React strict mode.
+      if (agentRestoreStartedRef.current) return;
+      agentRestoreStartedRef.current = true;
+      if (!agentType || !agentSessionId) return;
+      void launchAgentInLeaf(leafId, agentType, {
+        sessionId: agentSessionId,
+        cwd: initialCwd ?? null,
+        onSessionCaptured: (id) => onSessionCaptured?.(leafId, id),
+      });
+    }, []);
 
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const hideHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

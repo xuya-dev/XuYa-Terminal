@@ -12,7 +12,12 @@ import type {
 } from "@/modules/tabs/lib/useTabs";
 
 export type SerializedNode =
-  | { kind: "leaf"; cwd?: string; active?: boolean }
+  | {
+      kind: "leaf";
+      cwd?: string;
+      active?: boolean;
+      agentSessionId?: string;
+    }
   | { kind: "split"; dir: SplitDir; children: SerializedNode[] };
 
 export type SerializedTab =
@@ -21,6 +26,7 @@ export type SerializedTab =
       tree: SerializedNode;
       blocks?: boolean;
       customTitle?: string;
+      agentType?: "claude" | "codex" | "opencode";
     }
   | { kind: "editor"; path: string }
   | { kind: "preview"; url: string }
@@ -44,6 +50,9 @@ function serializeNode(node: PaneNode, activeLeafId: number): SerializedNode {
     return {
       kind: "leaf",
       ...(node.cwd !== undefined && { cwd: node.cwd }),
+      ...(node.agentSessionId !== undefined && {
+        agentSessionId: node.agentSessionId,
+      }),
       ...(node.id === activeLeafId && { active: true }),
     };
   }
@@ -76,6 +85,7 @@ function serializeTab(tab: Tab): SerializedTab | null {
         tree: serializeNode(tab.paneTree, tab.activeLeafId),
         ...(tab.blocks && { blocks: true }),
         ...(tab.customTitle !== undefined && { customTitle: tab.customTitle }),
+        ...(tab.agentType !== undefined && { agentType: tab.agentType }),
       };
     case "editor":
       return { kind: "editor", path: tab.path };
@@ -115,6 +125,9 @@ function hydrateNode(
       kind: "leaf",
       id,
       ...(node.cwd !== undefined && { cwd: node.cwd }),
+      ...(node.agentSessionId !== undefined && {
+        agentSessionId: node.agentSessionId,
+      }),
     };
   }
   const children = node.children.map((c) => hydrateNode(c, allocId, acc));
@@ -163,6 +176,7 @@ function hydrateTab(
         activeLeafId,
         ...(s.blocks && { blocks: true }),
         ...(s.customTitle !== undefined && { customTitle: s.customTitle }),
+        ...(s.agentType !== undefined && { agentType: s.agentType }),
       } satisfies TerminalTab;
     }
     case "editor":
