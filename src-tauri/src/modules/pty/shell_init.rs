@@ -158,6 +158,8 @@ mod unix {
 
     use portable_pty::CommandBuilder;
 
+    use super::TerminalAppearance;
+
     const ZSHENV: &str = include_str!("scripts/zshenv.zsh");
     const ZPROFILE: &str = include_str!("scripts/zprofile.zsh");
     const ZLOGIN: &str = include_str!("scripts/zlogin.zsh");

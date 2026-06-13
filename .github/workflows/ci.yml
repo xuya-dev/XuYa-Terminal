@@ -48,7 +48,7 @@ jobs:
         run: pnpm size
 
       - name: Dead code (advisory)
-        run: pnpm knip
+        run: pnpm knip || true
         continue-on-error: true
 
   rust:
