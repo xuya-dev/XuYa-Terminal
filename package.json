@@ -81,7 +81,7 @@
     "@iconify-json/catppuccin": "^1.2.17",
     "@lezer/highlight": "^1.2.3",
     "@lobehub/icons": "^5.10.0",
-    "@radix-ui/react-use-controllable-state": "^1.2.2",
+    "@radix-ui/react-use-controllable-state": "^1.2.3",
     "@replit/codemirror-vim": "^6.3.0",
     "@tanstack/react-virtual": "^3.14.2",
     "@tauri-apps/api": "^2.11.0",
