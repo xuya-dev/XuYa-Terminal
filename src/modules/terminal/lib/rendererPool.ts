@@ -326,6 +326,10 @@ function termOptions() {
     cursorStyle: "bar" as const,
     cursorInactiveStyle: "outline" as const,
     scrollback: prefs.terminalScrollback,
+    // 备用屏幕(less/man/Codex/Claude Code 等全屏 TUI)下默认无 scrollback 且
+    // 滚轮不做事;开启后 xterm 会把滚轮/触控板滚动翻译成 ↑/↓ 方向键发给应用,
+    // 让这类应用可用鼠标滚动。
+    altScrollMouse: true,
     allowProposedApi: true,
     minimumContrastRatio: terminalMinimumContrastRatio(prefs),
   };
@@ -357,6 +361,21 @@ function createSlot(): Slot {
   host.setAttribute("data-terax-slot", String(slots.length));
   getRecycler().appendChild(host);
   term.open(host);
+
+  // Shift + 滚轮:绕过应用的鼠标跟踪(mouse tracking),强制滚动终端自身缓冲区。
+  // 主流终端(iTerm2/Windows Terminal/WezTerm)的通用约定。capture 阶段挂在 host
+  // (xterm-viewport 的祖先),先于 xterm 自身的 wheel 处理,从而拦截事件不发往应用。
+  host.addEventListener(
+    "wheel",
+    (e: WheelEvent) => {
+      if (!e.shiftKey || e.deltaY === 0) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const lines = Math.max(1, Math.min(5, Math.round(Math.abs(e.deltaY) / 40)));
+      term.scrollLines(Math.sign(e.deltaY) * lines);
+    },
+    { capture: true },
+  );
 
   const slot: Slot = {
     id: slots.length,
