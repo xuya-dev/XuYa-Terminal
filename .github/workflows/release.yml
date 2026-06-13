@@ -66,6 +66,23 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Read release notes from changelog
+        id: release_notes
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $changelog = Get-Content -Raw CHANGELOG.md
+          $pattern = "(?s)## \[$([regex]::Escape($version))\][^\r\n]*(?:\r?\n)(.*?)(?=\r?\n## \[|\z)"
+          $match = [regex]::Match($changelog, $pattern)
+          if ($match.Success) {
+            $body = $match.Groups[1].Value.Trim()
+          } else {
+            $body = "Multi-platform release for Windows, macOS, and Linux. Auto-update is built in."
+          }
+          "body<<EOF" >> $env:GITHUB_OUTPUT
+          $body >> $env:GITHUB_OUTPUT
+          "EOF" >> $env:GITHUB_OUTPUT
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,7 +92,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "XuYa Terminal ${{ github.ref_name }}"
-          releaseBody: "Multi-platform release for Windows, macOS, and Linux. Auto-update is built in."
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           uploadUpdaterJson: true

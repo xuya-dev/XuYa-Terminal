@@ -13,7 +13,10 @@ import { IncognitoIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { CwdBreadcrumb } from "./CwdBreadcrumb";
 import { WorkspaceEnvSelector } from "./WorkspaceEnvSelector";
+import { AgentQuotaStatus } from "./AgentQuotaStatus";
 import type { WorkspaceEnv } from "@/modules/workspace";
+
+type AgentQuotaTool = "claude" | "codex";
 
 type Props = {
   cwd: string | null;
@@ -25,6 +28,7 @@ type Props = {
   /** Only rendered when the AI panel is open and a key is loaded. */
   hasComposer: boolean;
   privateActive: boolean;
+  agentTool: AgentQuotaTool | null;
 };
 
 export function StatusBar({
@@ -36,6 +40,7 @@ export function StatusBar({
   onOpenMini,
   hasComposer,
   privateActive,
+  agentTool,
 }: Props) {
   const panelOpen = useChatStore((s) => s.panelOpen);
   const openPanel = useChatStore((s) => s.openPanel);
@@ -60,6 +65,7 @@ export function StatusBar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        <AgentQuotaStatus tool={agentTool} />
         <AgentStatusPill onClick={onOpenMini} />
         {panelOpen && hasComposer ? (
           <AiStatusBarControls />

@@ -872,6 +872,11 @@ export default function App() {
   ]);
 
   const activeCwd = activeTerminalLeafCwd;
+  const activeAgentQuotaTool =
+    activeTab?.kind === "terminal" &&
+    (activeTab.agentType === "claude" || activeTab.agentType === "codex")
+      ? activeTab.agentType
+      : null;
 
   const handleNewSpace = useCallback(
     (dir?: string, name?: string) => {
@@ -1185,6 +1190,7 @@ export default function App() {
               privateActive={
                 activeTab?.kind === "terminal" && activeTab.private === true
               }
+              agentTool={activeAgentQuotaTool}
             />
           )}
 

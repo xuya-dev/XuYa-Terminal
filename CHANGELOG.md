@@ -2,6 +2,13 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [Unreleased]
+
+### ✨ Agent 额度查询 (Agent Quota)
+- 底部状态栏恢复 Claude Code / Codex 的代理商额度查询，并按当前 Agent 标签分开展示。
+- 恢复内置代理商额度查询，支持 DeepSeek、智谱 GLM、Kimi、MiniMax 等服务商。
+- 自定义代理商继续支持 New API 与 Sub2API 额度查询，并提供刷新状态与详细提示信息。
+
 ## [1.0.1] - 2026-06-12
 
 ### 🐛 macOS 窗口修复 (macOS Window Fixes)

@@ -1651,55 +1651,19 @@ async fn fetch_openai_compatible_models(
 async fn fetch_agent_provider_quota_inner(
     request: AgentProviderQuotaRequest,
 ) -> Result<AgentProviderQuotaResult, String> {
-    let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
-    let tool = parse_agent_tool(&request.tool)?.to_string();
-    let provider_id = clean_optional_text(Some(request.provider_id.as_str()))
-        .ok_or_else(|| "Provider is required".to_string())?;
+    let lookup = tokio::task::spawn_blocking(move || resolve_agent_quota_lookup(request))
+        .await
+        .map_err(|e| format!("Quota provider lookup failed: {e}"))??;
 
-    if provider_id == "official" {
-        return Ok(AgentProviderQuotaResult {
-            tool,
-            provider_id,
-            provider_name: "官方".to_string(),
-            quota_provider_type: None,
-            configured: false,
-            success: false,
-            plan_name: None,
-            total: None,
-            used: None,
-            remaining: None,
-            unit: None,
-            tiers: Vec::new(),
-            queried_at: current_unix_secs(),
-            error: Some("官方代理商不支持额度查询".to_string()),
-        });
-    }
-
-    let custom_id = custom_provider_id_from_selector(&provider_id);
-    let store = read_custom_provider_store(&home, &tool)?;
-    let provider = if let Some(custom_id) = custom_id {
-        store.providers.into_iter().find(|p| p.id == custom_id)
-    } else {
-        None
-    };
-
-    let Some(provider) = provider else {
-        return Ok(AgentProviderQuotaResult {
-            tool,
-            provider_id,
-            provider_name: "未知".to_string(),
-            quota_provider_type: None,
-            configured: false,
-            success: false,
-            plan_name: None,
-            total: None,
-            used: None,
-            remaining: None,
-            unit: None,
-            tiers: Vec::new(),
-            queried_at: current_unix_secs(),
-            error: Some("未找到代理商配置".to_string()),
-        });
+    let Some(provider) = lookup.provider else {
+        return Ok(quota_error_result(
+            &lookup.tool,
+            &lookup.provider_id,
+            &lookup.provider_name,
+            None,
+            false,
+            "当前代理商未配置额度查询",
+        ));
     };
 
     let client = reqwest::Client::builder()
@@ -1707,48 +1671,180 @@ async fn fetch_agent_provider_quota_inner(
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
-    let kind = normalize_quota_provider_type(provider.quota_provider_type.as_deref());
+    let explicit_kind = normalize_quota_provider_type(provider.quota_provider_type.as_deref());
+    let is_custom_provider = lookup
+        .provider_id
+        .starts_with(CUSTOM_PROVIDER_SELECTOR_PREFIX);
+    let kind = if is_custom_provider {
+        explicit_kind
+    } else {
+        explicit_kind.or_else(|| detect_agent_quota_provider(&provider.base_url))
+    };
     let Some(kind) = kind else {
-        return Ok(AgentProviderQuotaResult {
-            tool,
-            provider_id,
-            provider_name: provider.name,
-            quota_provider_type: None,
-            configured: false,
-            success: false,
-            plan_name: None,
-            total: None,
-            used: None,
-            remaining: None,
-            unit: None,
-            tiers: Vec::new(),
-            queried_at: current_unix_secs(),
-            error: Some("当前代理商未配置额度查询".to_string()),
-        });
+        let error = if is_custom_provider {
+            "当前代理商未配置额度查询"
+        } else {
+            "当前代理商暂不支持自动额度查询"
+        };
+        return Ok(quota_error_result(
+            &lookup.tool,
+            &lookup.provider_id,
+            &provider.name,
+            None,
+            false,
+            error,
+        ));
     };
 
     match kind.as_str() {
         "sub2api" => {
-            fetch_sub2api_quota(&client, &tool, &provider_id, &provider).await
+            fetch_sub2api_quota(&client, &lookup.tool, &lookup.provider_id, &provider).await
         }
-        "newapi" => fetch_newapi_quota(&client, &tool, &provider_id, &provider).await,
-        _ => Ok(AgentProviderQuotaResult {
+        "newapi" => fetch_newapi_quota(&client, &lookup.tool, &lookup.provider_id, &provider).await,
+        "balance" => {
+            fetch_balance_provider_quota(&client, &lookup.tool, &lookup.provider_id, &provider)
+                .await
+        }
+        "coding_plan" => {
+            fetch_coding_plan_provider_quota(&client, &lookup.tool, &lookup.provider_id, &provider)
+                .await
+        }
+        _ => Ok(quota_error_result(
+            &lookup.tool,
+            &lookup.provider_id,
+            &provider.name,
+            Some(kind),
+            false,
+            "不支持的额度查询类型",
+        )),
+    }
+}
+
+#[derive(Debug)]
+struct AgentQuotaLookup {
+    tool: String,
+    provider_id: String,
+    provider_name: String,
+    provider: Option<AgentCustomProvider>,
+}
+
+fn resolve_agent_quota_lookup(
+    request: AgentProviderQuotaRequest,
+) -> Result<AgentQuotaLookup, String> {
+    let home = home_dir().ok_or_else(|| "Failed to locate home directory".to_string())?;
+    let tool = parse_agent_tool(&request.tool)?.to_string();
+    let provider_id = clean_optional_text(Some(request.provider_id.as_str()))
+        .ok_or_else(|| "Provider is required".to_string())?;
+
+    if provider_id == "official" {
+        return Ok(AgentQuotaLookup {
             tool,
             provider_id,
-            provider_name: provider.name,
-            quota_provider_type: Some(kind),
-            configured: false,
-            success: false,
-            plan_name: None,
-            total: None,
-            used: None,
-            remaining: None,
-            unit: None,
-            tiers: Vec::new(),
-            queried_at: current_unix_secs(),
-            error: Some("不支持的额度查询类型".to_string()),
-        }),
+            provider_name: "官方".to_string(),
+            provider: None,
+        });
     }
+
+    let custom_id = custom_provider_id_from_selector(&provider_id);
+    let Some(custom_id) = custom_id else {
+        let built_in_providers = read_builtin_provider_store(&home, &tool)?;
+        let stored_built_in = built_in_providers
+            .iter()
+            .find(|provider| provider.id == provider_id);
+        let custom_store = read_custom_provider_store(&home, &tool)?;
+        let tool_state = if tool == "claude" {
+            read_claude_config_state(
+                &claude_settings_path(&home),
+                &custom_store.providers,
+                &built_in_providers,
+            )
+        } else {
+            read_codex_config_state(
+                &codex_config_path(&home),
+                &codex_auth_path(&home),
+                &custom_store.providers,
+                &built_in_providers,
+            )
+        };
+        let is_current = tool_state
+            .active_provider
+            .as_deref()
+            .is_some_and(|active| active == provider_id);
+        let base_url = stored_built_in
+            .and_then(|provider| clean_optional_text(Some(provider.base_url.as_str())))
+            .or_else(|| {
+                is_current
+                    .then(|| tool_state.base_url.clone())
+                    .flatten()
+                    .and_then(|value| clean_optional_text(Some(value.as_str())))
+            })
+            .or_else(|| {
+                if tool == "claude" {
+                    claude_known_provider_base_url(&provider_id).map(str::to_string)
+                } else {
+                    None
+                }
+            });
+        let api_key = stored_built_in
+            .and_then(|provider| clean_agent_api_key(&tool, Some(provider.api_key.as_str())))
+            .or_else(|| {
+                is_current
+                    .then(|| tool_state.api_key.clone())
+                    .flatten()
+                    .and_then(|value| clean_agent_api_key(&tool, Some(value.as_str())))
+            })
+            .unwrap_or_default();
+
+        let provider_name = built_in_provider_display_name(&provider_id).to_string();
+        let Some(base_url) = base_url else {
+            return Ok(AgentQuotaLookup {
+                tool,
+                provider_id,
+                provider_name,
+                provider: None,
+            });
+        };
+
+        let provider = AgentCustomProvider {
+            id: provider_id.clone(),
+            name: provider_name.clone(),
+            base_url,
+            api_key,
+            model: None,
+            haiku_model: None,
+            haiku_model_name: None,
+            sonnet_model: None,
+            sonnet_model_name: None,
+            opus_model: None,
+            opus_model_name: None,
+            extra_config: None,
+            quota_provider_type: None,
+            quota_base_url: None,
+            quota_api_key: None,
+            quota_access_token: None,
+            quota_user_id: None,
+        };
+
+        return Ok(AgentQuotaLookup {
+            tool,
+            provider_id,
+            provider_name,
+            provider: Some(provider),
+        });
+    };
+
+    let store = read_custom_provider_store(&home, &tool)?;
+    let provider = store
+        .providers
+        .into_iter()
+        .find(|provider| provider.id == custom_id)
+        .ok_or_else(|| "自定义代理商不存在".to_string())?;
+    Ok(AgentQuotaLookup {
+        tool,
+        provider_id: format!("{CUSTOM_PROVIDER_SELECTOR_PREFIX}{}", provider.id),
+        provider_name: provider.name.clone(),
+        provider: Some(provider),
+    })
 }
 
 async fn fetch_sub2api_quota(
@@ -1810,15 +1906,14 @@ async fn fetch_sub2api_quota(
 
     let json: Value = serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse Sub2API quota response: {e}"))?;
-    let remaining = value_number_path(&json, &["remaining"])
-        .or_else(|| value_number_path(&json, &["balance"]));
+    let remaining =
+        value_number_path(&json, &["remaining"]).or_else(|| value_number_path(&json, &["balance"]));
     let used = value_number_path(&json, &["quota", "used"])
         .or_else(|| value_number_path(&json, &["usage", "total", "cost"]));
-    let total = value_number_path(&json, &["quota", "limit"])
-        .or_else(|| {
-            used.zip(remaining)
-                .map(|(used, remaining)| used + remaining)
-        });
+    let total = value_number_path(&json, &["quota", "limit"]).or_else(|| {
+        used.zip(remaining)
+            .map(|(used, remaining)| used + remaining)
+    });
     let unit = value_string_path(&json, &["unit"])
         .or_else(|| value_string_path(&json, &["quota", "unit"]))
         .unwrap_or_else(|| "USD".to_string());
@@ -1958,6 +2053,529 @@ async fn fetch_newapi_quota(
         queried_at: current_unix_secs(),
         error: None,
     })
+}
+
+async fn fetch_balance_provider_quota(
+    client: &reqwest::Client,
+    tool: &str,
+    provider_id: &str,
+    provider: &AgentCustomProvider,
+) -> Result<AgentProviderQuotaResult, String> {
+    let api_key = clean_optional_text(Some(provider.api_key.as_str()));
+    let Some(api_key) = api_key else {
+        return Ok(quota_error_result(
+            tool,
+            provider_id,
+            &provider.name,
+            Some("balance".to_string()),
+            false,
+            "API Key 未配置",
+        ));
+    };
+    let url = provider.base_url.to_ascii_lowercase();
+
+    if url.contains("api.deepseek.com") {
+        let json = match quota_json_get(
+            client,
+            "https://api.deepseek.com/user/balance",
+            vec![("Authorization", format!("Bearer {api_key}"))],
+        )
+        .await
+        {
+            Ok(json) => json,
+            Err(error) => {
+                return Ok(quota_error_result(
+                    tool,
+                    provider_id,
+                    &provider.name,
+                    Some("balance".to_string()),
+                    true,
+                    &error,
+                ))
+            }
+        };
+        let info = json
+            .get("balance_infos")
+            .and_then(|value| value.as_array())
+            .and_then(|items| items.first());
+        let remaining = info.and_then(|item| value_number_path(item, &["total_balance"]));
+        let unit = info
+            .and_then(|item| value_string_path(item, &["currency"]))
+            .unwrap_or_else(|| "CNY".to_string());
+        return Ok(quota_success_result(
+            tool,
+            provider_id,
+            &provider.name,
+            Some("balance".to_string()),
+            Some("DeepSeek".to_string()),
+            None,
+            None,
+            remaining,
+            Some(unit),
+        ));
+    }
+
+    Ok(quota_error_result(
+        tool,
+        provider_id,
+        &provider.name,
+        Some("balance".to_string()),
+        false,
+        "未知余额查询代理商",
+    ))
+}
+
+async fn fetch_coding_plan_provider_quota(
+    client: &reqwest::Client,
+    tool: &str,
+    provider_id: &str,
+    provider: &AgentCustomProvider,
+) -> Result<AgentProviderQuotaResult, String> {
+    let api_key = clean_optional_text(Some(provider.api_key.as_str()));
+    let Some(api_key) = api_key else {
+        return Ok(quota_error_result(
+            tool,
+            provider_id,
+            &provider.name,
+            Some("coding_plan".to_string()),
+            false,
+            "API Key 未配置",
+        ));
+    };
+    let url = provider.base_url.to_ascii_lowercase();
+
+    if url.contains("api.kimi.com/coding") {
+        let json = match quota_json_get(
+            client,
+            "https://api.kimi.com/coding/v1/usages",
+            vec![("Authorization", format!("Bearer {api_key}"))],
+        )
+        .await
+        {
+            Ok(json) => json,
+            Err(error) => {
+                return Ok(quota_error_result(
+                    tool,
+                    provider_id,
+                    &provider.name,
+                    Some("coding_plan".to_string()),
+                    true,
+                    &error,
+                ))
+            }
+        };
+        let detail = json
+            .get("limits")
+            .and_then(|value| value.as_array())
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("detail"));
+        let mut tiers = Vec::new();
+        if let Some(detail) = detail {
+            if let Some(tier) = quota_limit_remaining_percent_tier(
+                "five_hour",
+                value_number_path(detail, &["limit"]),
+                value_number_path(detail, &["remaining"]),
+                value_reset_time_path(detail, &["resetTime"]),
+            ) {
+                tiers.push(tier);
+            }
+        }
+        if let Some(usage) = json.get("usage") {
+            if let Some(tier) = quota_limit_remaining_percent_tier(
+                "weekly_limit",
+                value_number_path(usage, &["limit"]),
+                value_number_path(usage, &["remaining"]),
+                value_reset_time_path(usage, &["resetTime"]),
+            ) {
+                tiers.push(tier);
+            }
+        }
+        return Ok(quota_success_result_with_tiers(
+            tool,
+            provider_id,
+            &provider.name,
+            Some("coding_plan".to_string()),
+            Some("Kimi Coding".to_string()),
+            tiers,
+        ));
+    }
+
+    if url.contains("open.bigmodel.cn") || url.contains("bigmodel.cn") || url.contains("api.z.ai") {
+        let json = match quota_json_get(
+            client,
+            "https://api.z.ai/api/monitor/usage/quota/limit",
+            vec![
+                ("Authorization", api_key.clone()),
+                ("Content-Type", "application/json".to_string()),
+                ("Accept-Language", "en-US,en".to_string()),
+            ],
+        )
+        .await
+        {
+            Ok(json) => json,
+            Err(error) => {
+                return Ok(quota_error_result(
+                    tool,
+                    provider_id,
+                    &provider.name,
+                    Some("coding_plan".to_string()),
+                    true,
+                    &error,
+                ))
+            }
+        };
+        if value_bool_path(&json, &["success"]) == Some(false) {
+            let message = value_string_path(&json, &["msg"])
+                .unwrap_or_else(|| "智谱额度接口返回失败".to_string());
+            return Ok(quota_error_result(
+                tool,
+                provider_id,
+                &provider.name,
+                Some("coding_plan".to_string()),
+                true,
+                &message,
+            ));
+        }
+        let data = json.get("data").unwrap_or(&json);
+        let mut token_limits = Vec::new();
+        if let Some(limits) = data.get("limits").and_then(|value| value.as_array()) {
+            for limit in limits {
+                let Some(limit_type) = value_string_path(limit, &["type"]) else {
+                    continue;
+                };
+                if !limit_type.eq_ignore_ascii_case("TOKENS_LIMIT") {
+                    continue;
+                }
+                let Some(percentage) = value_number_path(limit, &["percentage"]) else {
+                    continue;
+                };
+                token_limits.push((value_reset_time_path(limit, &["nextResetTime"]), percentage));
+            }
+        }
+        token_limits.sort_by_key(|(reset, _)| (reset.is_some(), reset.clone()));
+        let mut tiers = Vec::new();
+        for (index, (reset, percentage)) in token_limits.into_iter().take(2).enumerate() {
+            let name = if index == 0 {
+                "five_hour"
+            } else {
+                "weekly_limit"
+            };
+            if let Some(tier) = quota_percent_tier(name, percentage, reset) {
+                tiers.push(tier);
+            }
+        }
+        return Ok(quota_success_result_with_tiers(
+            tool,
+            provider_id,
+            &provider.name,
+            Some("coding_plan".to_string()),
+            value_string_path(data, &["level"]).or_else(|| Some("Zhipu GLM".to_string())),
+            tiers,
+        ));
+    }
+
+    if url.contains("api.minimaxi.com") || url.contains("api.minimax.io") {
+        let endpoint = if url.contains("api.minimaxi.com") {
+            "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains"
+        } else {
+            "https://api.minimax.io/v1/api/openplatform/coding_plan/remains"
+        };
+        let json = match quota_json_get(
+            client,
+            endpoint,
+            vec![
+                ("Authorization", format!("Bearer {api_key}")),
+                ("Content-Type", "application/json".to_string()),
+            ],
+        )
+        .await
+        {
+            Ok(json) => json,
+            Err(error) => {
+                return Ok(quota_error_result(
+                    tool,
+                    provider_id,
+                    &provider.name,
+                    Some("coding_plan".to_string()),
+                    true,
+                    &error,
+                ))
+            }
+        };
+        let general = json
+            .get("model_remains")
+            .and_then(|value| value.as_array())
+            .and_then(|items| {
+                items.iter().find(|item| {
+                    value_string_path(item, &["model_name"]).is_some_and(|name| name == "general")
+                })
+            });
+        let mut tiers = Vec::new();
+        if let Some(general) = general {
+            if let Some(remaining) =
+                value_number_path(general, &["current_interval_remaining_percent"])
+            {
+                if let Some(tier) = quota_percent_remaining_tier(
+                    "five_hour",
+                    remaining,
+                    value_reset_time_path(general, &["end_time"]),
+                ) {
+                    tiers.push(tier);
+                }
+            }
+            let weekly_status =
+                value_number_path(general, &["current_weekly_status"]).unwrap_or_default();
+            if weekly_status == 1.0 {
+                if let Some(remaining) =
+                    value_number_path(general, &["current_weekly_remaining_percent"])
+                {
+                    if let Some(tier) = quota_percent_remaining_tier(
+                        "weekly_limit",
+                        remaining,
+                        value_reset_time_path(general, &["weekly_end_time"]),
+                    ) {
+                        tiers.push(tier);
+                    }
+                }
+            }
+        }
+        return Ok(quota_success_result_with_tiers(
+            tool,
+            provider_id,
+            &provider.name,
+            Some("coding_plan".to_string()),
+            Some("MiniMax Coding".to_string()),
+            tiers,
+        ));
+    }
+
+    Ok(quota_error_result(
+        tool,
+        provider_id,
+        &provider.name,
+        Some("coding_plan".to_string()),
+        false,
+        "未知 Coding Plan 代理商",
+    ))
+}
+
+fn quota_success_result(
+    tool: &str,
+    provider_id: &str,
+    provider_name: &str,
+    quota_provider_type: Option<String>,
+    plan_name: Option<String>,
+    total: Option<f64>,
+    used: Option<f64>,
+    remaining: Option<f64>,
+    unit: Option<String>,
+) -> AgentProviderQuotaResult {
+    AgentProviderQuotaResult {
+        tool: tool.to_string(),
+        provider_id: provider_id.to_string(),
+        provider_name: provider_name.to_string(),
+        quota_provider_type,
+        configured: true,
+        success: true,
+        plan_name,
+        total,
+        used,
+        remaining,
+        unit,
+        tiers: Vec::new(),
+        queried_at: current_unix_secs(),
+        error: None,
+    }
+}
+
+fn quota_success_result_with_tiers(
+    tool: &str,
+    provider_id: &str,
+    provider_name: &str,
+    quota_provider_type: Option<String>,
+    plan_name: Option<String>,
+    tiers: Vec<AgentProviderQuotaTier>,
+) -> AgentProviderQuotaResult {
+    let (total, used, remaining, unit) = quota_tier_fields(tiers.first());
+    let mut result = quota_success_result(
+        tool,
+        provider_id,
+        provider_name,
+        quota_provider_type,
+        plan_name,
+        total,
+        used,
+        remaining,
+        unit,
+    );
+    result.tiers = tiers;
+    result
+}
+
+fn quota_tier_fields(
+    tier: Option<&AgentProviderQuotaTier>,
+) -> (Option<f64>, Option<f64>, Option<f64>, Option<String>) {
+    let Some(tier) = tier else {
+        return (None, None, None, None);
+    };
+    (tier.total, tier.used, tier.remaining, tier.unit.clone())
+}
+
+fn quota_error_result(
+    tool: &str,
+    provider_id: &str,
+    provider_name: &str,
+    quota_provider_type: Option<String>,
+    configured: bool,
+    error: &str,
+) -> AgentProviderQuotaResult {
+    AgentProviderQuotaResult {
+        tool: tool.to_string(),
+        provider_id: provider_id.to_string(),
+        provider_name: provider_name.to_string(),
+        quota_provider_type,
+        configured,
+        success: false,
+        plan_name: None,
+        total: None,
+        used: None,
+        remaining: None,
+        unit: None,
+        tiers: Vec::new(),
+        queried_at: current_unix_secs(),
+        error: Some(error.to_string()),
+    }
+}
+
+async fn quota_json_get(
+    client: &reqwest::Client,
+    url: &str,
+    headers: Vec<(&'static str, String)>,
+) -> Result<Value, String> {
+    let mut request = client
+        .get(url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "XuYa Terminal");
+    for (key, value) in headers {
+        request = request.header(key, value);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("Quota request failed: {e}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("HTTP {status}: {}", truncate_error_body(body)));
+    }
+    serde_json::from_str(&body).map_err(|e| format!("Failed to parse quota response: {e}"))
+}
+
+fn detect_agent_quota_provider(base_url: &str) -> Option<String> {
+    let url = base_url.to_ascii_lowercase();
+    if url.contains("api.deepseek.com") {
+        return Some("balance".to_string());
+    }
+    if url.contains("api.kimi.com/coding")
+        || url.contains("open.bigmodel.cn")
+        || url.contains("bigmodel.cn")
+        || url.contains("api.z.ai")
+        || url.contains("api.minimaxi.com")
+        || url.contains("api.minimax.io")
+    {
+        return Some("coding_plan".to_string());
+    }
+    None
+}
+
+fn built_in_provider_display_name(provider_id: &str) -> &str {
+    match provider_id {
+        "official" => "官方",
+        "zhipu" => "ZhiPu GLM",
+        "minimax" => "MiniMax",
+        "kimi" => "Kimi",
+        "deepseek" => "DeepSeek",
+        "xiaomimimo" => "XiaoMi MiMo",
+        other => other,
+    }
+}
+
+fn quota_percent_tier(
+    name: &str,
+    utilization: f64,
+    resets_at: Option<String>,
+) -> Option<AgentProviderQuotaTier> {
+    let utilization = normalized_percent(utilization)?;
+    Some(AgentProviderQuotaTier {
+        name: name.to_string(),
+        utilization: Some(utilization),
+        total: Some(100.0),
+        used: Some(utilization),
+        remaining: Some((100.0 - utilization).max(0.0)),
+        unit: Some("%".to_string()),
+        resets_at,
+    })
+}
+
+fn quota_percent_remaining_tier(
+    name: &str,
+    remaining: f64,
+    resets_at: Option<String>,
+) -> Option<AgentProviderQuotaTier> {
+    let remaining = normalized_percent(remaining)?;
+    Some(AgentProviderQuotaTier {
+        name: name.to_string(),
+        utilization: Some((100.0 - remaining).max(0.0)),
+        total: Some(100.0),
+        used: Some((100.0 - remaining).max(0.0)),
+        remaining: Some(remaining),
+        unit: Some("%".to_string()),
+        resets_at,
+    })
+}
+
+fn quota_limit_remaining_percent_tier(
+    name: &str,
+    limit: Option<f64>,
+    remaining: Option<f64>,
+    resets_at: Option<String>,
+) -> Option<AgentProviderQuotaTier> {
+    let limit = limit?;
+    let remaining = remaining?;
+    if !limit.is_finite() || !remaining.is_finite() || limit <= 0.0 {
+        return None;
+    }
+    let utilization = ((limit - remaining).max(0.0) / limit) * 100.0;
+    quota_percent_tier(name, utilization, resets_at)
+}
+
+fn normalized_percent(value: f64) -> Option<f64> {
+    if !value.is_finite() {
+        return None;
+    }
+    Some(value.clamp(0.0, 100.0))
+}
+
+fn value_reset_time_path(value: &Value, path: &[&str]) -> Option<String> {
+    let value = value_path(value, path)?;
+    if let Some(text) = value.as_str() {
+        return clean_optional_text(Some(text));
+    }
+    if let Some(number) = value.as_i64() {
+        return Some(number.to_string());
+    }
+    value.as_f64().map(|number| number.to_string())
+}
+
+fn truncate_error_body(body: String) -> String {
+    const MAX_CHARS: usize = 512;
+    if body.chars().count() <= MAX_CHARS {
+        body
+    } else {
+        let mut output = body.chars().take(MAX_CHARS).collect::<String>();
+        output.push_str("...");
+        output
+    }
 }
 
 // ── Database Operations ──────────────────────────────────────────────────────
