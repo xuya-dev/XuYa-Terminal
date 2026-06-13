@@ -262,15 +262,13 @@ mod tests {
     fn bash_with_and_without_timestamps() {
         let c = "#1700000000\ngit push\nls\n";
         let got = parse_bash(c);
-        assert_eq!(
-            got,
-            vec![("git push".into(), 1700000000), ("ls".into(), 0)]
-        );
+        assert_eq!(got, vec![("git push".into(), 1700000000), ("ls".into(), 0)]);
     }
 
     #[test]
     fn fish_format() {
-        let c = "- cmd: git commit -m \\\"x\\\"\n  when: 1700000000\n- cmd: ls\n  when: 1700000001\n";
+        let c =
+            "- cmd: git commit -m \\\"x\\\"\n  when: 1700000000\n- cmd: ls\n  when: 1700000001\n";
         let got = parse_fish(c);
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].1, 1700000000);

@@ -320,7 +320,9 @@ mod windows {
             zdotdir: String,
             user_zdotdir: Option<String>,
         },
-        Bash { rcfile: String },
+        Bash {
+            rcfile: String,
+        },
         Fish,
         None,
     }

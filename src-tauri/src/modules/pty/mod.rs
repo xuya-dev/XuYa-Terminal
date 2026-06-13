@@ -55,8 +55,10 @@ pub async fn pty_open(
     })?;
     let id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let session = tauri::async_runtime::spawn_blocking(move || {
-        session::spawn(id, app, cols, rows, cwd, workspace, blocks, on_data, on_exit)
-            .map(|(s, _)| s)
+        session::spawn(
+            id, app, cols, rows, cwd, workspace, blocks, on_data, on_exit,
+        )
+        .map(|(s, _)| s)
     })
     .await
     .map_err(|e| {
@@ -230,8 +232,7 @@ fn shell_has_children(shell_pid: u32) -> bool {
     use std::mem::{size_of, zeroed};
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
-        TH32CS_SNAPPROCESS,
+        CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
     };
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);

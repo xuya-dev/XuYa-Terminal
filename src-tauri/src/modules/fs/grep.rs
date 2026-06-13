@@ -241,13 +241,7 @@ pub fn fs_grep_interactive(
 
     let cancel = || state.generation.load(Ordering::SeqCst) != my_gen;
     Ok(search_tree(
-        &root_path,
-        &root,
-        &workspace,
-        &matcher,
-        &None,
-        cap,
-        &cancel,
+        &root_path, &root, &workspace, &matcher, &None, cap, &cancel,
     ))
 }
 
@@ -361,11 +355,26 @@ mod tests {
         let ws = WorkspaceEnv::from_option(None);
         let root_display = dir.path().to_string_lossy().to_string();
 
-        let live = search_tree(dir.path(), &root_display, &ws, &matcher, &None, 100, &|| false);
+        let live = search_tree(
+            dir.path(),
+            &root_display,
+            &ws,
+            &matcher,
+            &None,
+            100,
+            &|| false,
+        );
         assert_eq!(live.hits.len(), 1, "uncancelled search finds the match");
 
-        let stopped =
-            search_tree(dir.path(), &root_display, &ws, &matcher, &None, 100, &|| true);
+        let stopped = search_tree(
+            dir.path(),
+            &root_display,
+            &ws,
+            &matcher,
+            &None,
+            100,
+            &|| true,
+        );
         assert!(stopped.hits.is_empty(), "cancelled search yields nothing");
     }
 }
