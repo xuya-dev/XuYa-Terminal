@@ -1,5 +1,6 @@
 import { ensureMonoFontsLoaded } from "@/lib/fonts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
+import { currentTerminalAppearance } from "@/styles/terminalTheme";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { SearchAddon } from "@xterm/addon-search";
@@ -135,7 +136,7 @@ export function whenSessionReady(
 
 export function writeToSession(leafId: number, data: string): boolean {
   const s = sessions.get(leafId);
-  if (!s || !s.pty) return false;
+  if (!s?.pty) return false;
   void s.pty.write(data);
   return true;
 }
@@ -898,6 +899,12 @@ export function useTerminalSession({
 
   const applyTheme = useCallback(() => {
     applyPoolTheme();
+    const appearance = currentTerminalAppearance();
+    for (const s of sessions.values()) {
+      void s.pty?.setAppearance(appearance).catch((e) => {
+        console.warn("[terax] pty_set_appearance failed:", e);
+      });
+    }
   }, []);
 
   const selectBlockAt = useCallback(

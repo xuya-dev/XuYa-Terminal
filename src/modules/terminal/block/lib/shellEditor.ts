@@ -2,10 +2,10 @@ import { buildTerminalTheme } from "@/styles/terminalTheme";
 import {
   acceptCompletion,
   autocompletion,
-  closeCompletion,
   type Completion,
   type CompletionContext,
   type CompletionResult,
+  closeCompletion,
   completionStatus,
   moveCompletionSelection,
   startCompletion,
@@ -22,11 +22,7 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
-import {
-  Compartment,
-  EditorState,
-  Prec,
-} from "@codemirror/state";
+import { Compartment, EditorState, Prec } from "@codemirror/state";
 import {
   crosshairCursor,
   drawSelection,
@@ -78,21 +74,124 @@ export type ShellEditorHandle = {
 // of "type a command, get a list"; the Rust history layer (later) ranks real
 // usage on top. The dynamic layer below adds words already on screen.
 const SHELL_KEYWORDS = [
-  "if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case",
-  "esac", "in", "function", "select", "until", "return", "break", "continue",
-  "export", "unset", "alias", "unalias", "source", "set", "local", "read",
+  "if",
+  "then",
+  "else",
+  "elif",
+  "fi",
+  "for",
+  "while",
+  "do",
+  "done",
+  "case",
+  "esac",
+  "in",
+  "function",
+  "select",
+  "until",
+  "return",
+  "break",
+  "continue",
+  "export",
+  "unset",
+  "alias",
+  "unalias",
+  "source",
+  "set",
+  "local",
+  "read",
 ];
 const SHELL_COMMANDS = [
-  "cd", "ls", "pwd", "echo", "printf", "cat", "grep", "rg", "find", "fd", "awk",
-  "sed", "sort", "uniq", "wc", "head", "tail", "less", "tee", "xargs", "cut",
-  "tr", "diff", "touch", "mkdir", "rmdir", "rm", "cp", "mv", "ln", "chmod",
-  "chown", "stat", "du", "df", "ps", "top", "htop", "kill", "jobs", "nohup",
-  "env", "which", "man", "history", "clear", "exit", "ssh", "scp", "rsync",
-  "curl", "wget", "ping", "tar", "gzip", "zip", "unzip", "make", "cmake",
-  "gcc", "clang", "git", "gh", "node", "npm", "npx", "pnpm", "yarn", "bun",
-  "deno", "python", "python3", "pip", "pip3", "cargo", "rustc", "rustup", "go",
-  "docker", "kubectl", "helm", "terraform", "brew", "apt", "systemctl",
-  "code", "vim", "nvim", "nano", "open",
+  "cd",
+  "ls",
+  "pwd",
+  "echo",
+  "printf",
+  "cat",
+  "grep",
+  "rg",
+  "find",
+  "fd",
+  "awk",
+  "sed",
+  "sort",
+  "uniq",
+  "wc",
+  "head",
+  "tail",
+  "less",
+  "tee",
+  "xargs",
+  "cut",
+  "tr",
+  "diff",
+  "touch",
+  "mkdir",
+  "rmdir",
+  "rm",
+  "cp",
+  "mv",
+  "ln",
+  "chmod",
+  "chown",
+  "stat",
+  "du",
+  "df",
+  "ps",
+  "top",
+  "htop",
+  "kill",
+  "jobs",
+  "nohup",
+  "env",
+  "which",
+  "man",
+  "history",
+  "clear",
+  "exit",
+  "ssh",
+  "scp",
+  "rsync",
+  "curl",
+  "wget",
+  "ping",
+  "tar",
+  "gzip",
+  "zip",
+  "unzip",
+  "make",
+  "cmake",
+  "gcc",
+  "clang",
+  "git",
+  "gh",
+  "node",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "bun",
+  "deno",
+  "python",
+  "python3",
+  "pip",
+  "pip3",
+  "cargo",
+  "rustc",
+  "rustup",
+  "go",
+  "docker",
+  "kubectl",
+  "helm",
+  "terraform",
+  "brew",
+  "apt",
+  "systemctl",
+  "code",
+  "vim",
+  "nvim",
+  "nano",
+  "open",
 ];
 
 const WORD_RE = /[\w./+-]*/;
@@ -102,7 +201,10 @@ const VALID_FOR = /^[\w./+-]*$/;
 // separator (; & | newline ( { ), so the 2nd command in `a; b` completes too.
 const SEGMENT_START = /(^|[\n;&|(){}])\s*$/;
 
-function commandOptions(prefix: string, getCommands: () => string[]): Completion[] {
+function commandOptions(
+  prefix: string,
+  getCommands: () => string[],
+): Completion[] {
   const names = getCommands();
   const src = names.length ? names : SHELL_COMMANDS;
   const out: Completion[] = [];
@@ -118,10 +220,7 @@ function commandOptions(prefix: string, getCommands: () => string[]): Completion
   return out;
 }
 
-function docWordOptions(
-  ctx: CompletionContext,
-  current: string,
-): Completion[] {
+function docWordOptions(ctx: CompletionContext, current: string): Completion[] {
   const seen = new Set<string>([current]);
   const out: Completion[] = [];
   for (const m of ctx.state.doc.toString().matchAll(DOC_WORD_RE)) {
@@ -140,9 +239,7 @@ function makeCompletionSource(
   getCommands: () => string[],
   getCwd: () => string | null,
 ) {
-  return async (
-    ctx: CompletionContext,
-  ): Promise<CompletionResult | null> => {
+  return async (ctx: CompletionContext): Promise<CompletionResult | null> => {
     if (historyOpen(ctx.state)) return null;
     const word = ctx.matchBefore(WORD_RE);
     if (!word || (word.from === word.to && !ctx.explicit)) return null;
@@ -257,7 +354,9 @@ export function createShellEditor(opts: ShellEditorOptions): ShellEditorHandle {
   const editableComp = new Compartment();
 
   const clear = (view: EditorView) =>
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: "" },
+    });
 
   const submitKeys = Prec.highest(
     keymap.of([
@@ -303,6 +402,7 @@ export function createShellEditor(opts: ShellEditorOptions): ShellEditorHandle {
       shellLanguage,
       highlightComp.of(syntaxHighlighting(highlightStyle())),
       autocompletion({
+        tooltipClass: () => "cm-shell-autocomplete",
         override: [
           makeCompletionSource(
             opts.commandNames ?? (() => []),

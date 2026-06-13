@@ -5,6 +5,17 @@
   border: none;
 }
 
+.cm-history-popover,
+.cm-tooltip.cm-tooltip-autocomplete.cm-shell-autocomplete {
+  --popover: #18181b;
+  --popover-foreground: #f6f8fa;
+  --accent: #27272a;
+  --accent-foreground: #f6f8fa;
+  --border: rgba(255, 255, 255, 0.12);
+  --foreground: #f6f8fa;
+  --muted-foreground: rgba(212, 212, 216, 0.72);
+}
+
 .cm-history-popover {
   display: flex;
   flex-direction: column;

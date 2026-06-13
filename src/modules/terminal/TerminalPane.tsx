@@ -5,6 +5,7 @@ import {
   memo,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -61,6 +62,10 @@ export const TerminalPane = memo(
     const containerRef = useRef<HTMLDivElement>(null);
     const downYRef = useRef<number | null>(null);
     const { resolvedMode, themeId, customThemes } = useTheme();
+    const themeKey = useMemo(
+      () => `${resolvedMode}:${themeId}:${JSON.stringify(customThemes)}`,
+      [resolvedMode, themeId, customThemes],
+    );
 
     const session = useTerminalSession({
       leafId,
@@ -75,10 +80,11 @@ export const TerminalPane = memo(
     });
 
     useEffect(() => {
+      void themeKey;
       // Defer one frame so CSS-variable token resolution sees the new class.
       const id = requestAnimationFrame(() => session.applyTheme());
       return () => cancelAnimationFrame(id);
-    }, [resolvedMode, themeId, customThemes, session]);
+    }, [themeKey, session]);
 
     useImperativeHandle(
       ref,
@@ -134,7 +140,7 @@ export const TerminalPane = memo(
     if (blocks) {
       return (
         <div
-          className="zoom-exempt flex h-full w-full flex-col"
+          className="dark zoom-exempt flex h-full w-full flex-col bg-[var(--terminal-background)] text-[var(--terminal-foreground)]"
           style={hideStyle}
         >
           <div className="relative min-h-0 flex-1">
@@ -179,7 +185,7 @@ export const TerminalPane = memo(
     return (
       <div
         ref={containerRef}
-        className="zoom-exempt h-full w-full"
+        className="dark zoom-exempt h-full w-full bg-[var(--terminal-background)] text-[var(--terminal-foreground)]"
         style={hideStyle}
       />
     );

@@ -4,6 +4,8 @@ use portable_pty::CommandBuilder;
 
 use crate::modules::workspace::{self, WorkspaceEnv};
 
+use super::{TerminalAppearance, TerminalColorScheme};
+
 #[cfg(windows)]
 const BASHRC_SCRIPT: &str = include_str!("scripts/bashrc.bash");
 #[cfg(windows)]
@@ -51,15 +53,16 @@ pub fn build_command(
     cwd: Option<String>,
     workspace: WorkspaceEnv,
     blocks: bool,
+    appearance: &TerminalAppearance,
 ) -> Result<CommandBuilder, String> {
     #[cfg(unix)]
     {
         let _ = workspace;
-        unix::build(cwd, blocks)
+        unix::build(cwd, blocks, appearance)
     }
     #[cfg(windows)]
     {
-        windows::build(cwd, workspace, blocks)
+        windows::build(cwd, workspace, blocks, appearance)
     }
 }
 
@@ -99,10 +102,16 @@ fn ensure_utf8_locale(cmd: &mut CommandBuilder) {
     cmd.env("LANG", fallback);
 }
 
-fn apply_common(cmd: &mut CommandBuilder, cwd: Option<String>, blocks: bool) {
+fn apply_common(
+    cmd: &mut CommandBuilder,
+    cwd: Option<String>,
+    blocks: bool,
+    appearance: &TerminalAppearance,
+) {
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERAX_TERMINAL", "1");
+    apply_terminal_appearance(cmd, appearance);
     if blocks {
         cmd.env("TERAX_BLOCKS", "1");
     }
@@ -120,6 +129,24 @@ fn apply_common(cmd: &mut CommandBuilder, cwd: Option<String>, blocks: bool) {
         cmd.cwd(cwd);
     } else {
         log::warn!("pty cwd: no usable directory, inheriting from process");
+    }
+}
+
+fn apply_terminal_appearance(cmd: &mut CommandBuilder, appearance: &TerminalAppearance) {
+    let scheme = match appearance.color_scheme {
+        TerminalColorScheme::Light => "light",
+        TerminalColorScheme::Dark => "dark",
+    };
+    cmd.env("TERAX_COLOR_SCHEME", scheme);
+    cmd.env("TERAX_THEME", scheme);
+    cmd.env("TERMINAL_COLOR_SCHEME", scheme);
+    cmd.env("COLORFGBG", color_fg_bg(appearance.color_scheme));
+}
+
+fn color_fg_bg(scheme: TerminalColorScheme) -> &'static str {
+    match scheme {
+        TerminalColorScheme::Light => "0;15",
+        TerminalColorScheme::Dark => "15;0",
     }
 }
 
@@ -178,10 +205,14 @@ mod unix {
         }
     }
 
-    pub fn build(cwd: Option<String>, blocks: bool) -> Result<CommandBuilder, String> {
+    pub fn build(
+        cwd: Option<String>,
+        blocks: bool,
+        appearance: &TerminalAppearance,
+    ) -> Result<CommandBuilder, String> {
         let (shell, shell_path) = Shell::detect();
         let mut cmd = CommandBuilder::new(&shell_path);
-        super::apply_common(&mut cmd, cwd, blocks);
+        super::apply_common(&mut cmd, cwd, blocks, appearance);
 
         match shell {
             Shell::Zsh => {
@@ -290,6 +321,7 @@ mod windows {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use crate::modules::pty::TerminalAppearance;
     use crate::modules::workspace::WorkspaceEnv;
     use portable_pty::CommandBuilder;
 
@@ -336,10 +368,11 @@ mod windows {
         cwd: Option<String>,
         workspace: WorkspaceEnv,
         blocks: bool,
+        appearance: &TerminalAppearance,
     ) -> Result<CommandBuilder, String> {
         if let WorkspaceEnv::Wsl { distro } = workspace {
             let _ = blocks;
-            return build_wsl(cwd, distro);
+            return build_wsl(cwd, distro, appearance);
         }
         let shell_path = super::windows_shell_path();
         let shell_name = shell_path
@@ -350,7 +383,7 @@ mod windows {
         let is_powershell = shell_name == "pwsh.exe" || shell_name == "powershell.exe";
 
         let mut cmd = CommandBuilder::new(&shell_path);
-        super::apply_common(&mut cmd, cwd, blocks);
+        super::apply_common(&mut cmd, cwd, blocks, appearance);
 
         if is_powershell {
             match prepare_ps_profile() {
@@ -374,7 +407,11 @@ mod windows {
         Ok(cmd)
     }
 
-    fn build_wsl(cwd: Option<String>, distro: String) -> Result<CommandBuilder, String> {
+    fn build_wsl(
+        cwd: Option<String>,
+        distro: String,
+        appearance: &TerminalAppearance,
+    ) -> Result<CommandBuilder, String> {
         crate::modules::workspace::validate_wsl_distro_name(&distro)?;
         let shell_path = crate::modules::workspace::wsl_login_shell(distro.clone())?;
         let shell_kind = ShellKind::from_path(&shell_path);
@@ -427,6 +464,7 @@ mod windows {
             &shell_path,
             shell_kind,
             integration,
+            appearance,
         );
         let mut cmd = CommandBuilder::new("wsl.exe");
         for arg in &spec.args {
@@ -435,6 +473,7 @@ mod windows {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERAX_TERMINAL", "1");
+        super::apply_terminal_appearance(&mut cmd, appearance);
         super::ensure_utf8_locale(&mut cmd);
         log::info!("spawning WSL shell: {distro} ({shell_path})");
         Ok(cmd)
@@ -446,6 +485,7 @@ mod windows {
         shell_path: &str,
         shell_kind: ShellKind,
         integration: WslShellIntegration,
+        appearance: &TerminalAppearance,
     ) -> WslLaunchSpec {
         let mut args = vec![
             "-d".to_string(),
@@ -454,6 +494,8 @@ mod windows {
             cwd.filter(|s| !s.is_empty()).unwrap_or("~").to_string(),
             "--exec".to_string(),
         ];
+        args.push("env".to_string());
+        args.extend(terminal_appearance_env(appearance));
         match (shell_kind, integration) {
             (
                 ShellKind::Zsh,
@@ -462,7 +504,6 @@ mod windows {
                     user_zdotdir,
                 },
             ) => {
-                args.push("env".to_string());
                 if let Some(user_zdotdir) = user_zdotdir {
                     args.push(format!("TERAX_USER_ZDOTDIR={user_zdotdir}"));
                 }
@@ -495,6 +536,22 @@ mod windows {
             }
         }
         WslLaunchSpec { args }
+    }
+
+    fn terminal_appearance_env(appearance: &TerminalAppearance) -> Vec<String> {
+        let scheme = match appearance.color_scheme {
+            super::TerminalColorScheme::Light => "light",
+            super::TerminalColorScheme::Dark => "dark",
+        };
+        vec![
+            "TERM=xterm-256color".to_string(),
+            "COLORTERM=truecolor".to_string(),
+            "TERAX_TERMINAL=1".to_string(),
+            format!("TERAX_COLOR_SCHEME={scheme}"),
+            format!("TERAX_THEME={scheme}"),
+            format!("TERMINAL_COLOR_SCHEME={scheme}"),
+            format!("COLORFGBG={}", super::color_fg_bg(appearance.color_scheme)),
+        ]
     }
 
     fn probe_wsl_zdotdir(distro: &str, shell_path: &str) -> Result<String, String> {
@@ -597,6 +654,33 @@ mod windows {
     mod tests {
         use super::*;
 
+        fn dark_appearance() -> TerminalAppearance {
+            TerminalAppearance {
+                color_scheme: super::super::TerminalColorScheme::Dark,
+                foreground: "#f6f8fa".into(),
+                background: "#0d1117".into(),
+                cursor: "#f6f8fa".into(),
+            }
+        }
+
+        fn wsl_prefix(cwd: &str) -> Vec<String> {
+            vec![
+                "-d".to_string(),
+                "Ubuntu".to_string(),
+                "--cd".to_string(),
+                cwd.to_string(),
+                "--exec".to_string(),
+                "env".to_string(),
+                "TERM=xterm-256color".to_string(),
+                "COLORTERM=truecolor".to_string(),
+                "TERAX_TERMINAL=1".to_string(),
+                "TERAX_COLOR_SCHEME=dark".to_string(),
+                "TERAX_THEME=dark".to_string(),
+                "TERMINAL_COLOR_SCHEME=dark".to_string(),
+                "COLORFGBG=15;0".to_string(),
+            ]
+        }
+
         #[test]
         fn builds_wsl_zsh_launch_spec_with_env_and_login() {
             let spec = build_wsl_launch_spec(
@@ -608,21 +692,15 @@ mod windows {
                     zdotdir: "/home/vinicios/.cache/terax/shell-integration/zsh".into(),
                     user_zdotdir: None,
                 },
+                &dark_appearance(),
             );
-            assert_eq!(
-                spec.args,
-                vec![
-                    "-d".to_string(),
-                    "Ubuntu".to_string(),
-                    "--cd".to_string(),
-                    "/home/vinicios/repo".to_string(),
-                    "--exec".to_string(),
-                    "env".to_string(),
-                    "ZDOTDIR=/home/vinicios/.cache/terax/shell-integration/zsh".to_string(),
-                    "/usr/bin/zsh".to_string(),
-                    "-l".to_string(),
-                ]
-            );
+            let mut expected = wsl_prefix("/home/vinicios/repo");
+            expected.extend([
+                "ZDOTDIR=/home/vinicios/.cache/terax/shell-integration/zsh".to_string(),
+                "/usr/bin/zsh".to_string(),
+                "-l".to_string(),
+            ]);
+            assert_eq!(spec.args, expected);
         }
 
         #[test]
@@ -636,22 +714,16 @@ mod windows {
                     zdotdir: "/home/vinicios/.cache/terax/shell-integration/zsh".into(),
                     user_zdotdir: Some("/home/vinicios/.config/zsh".into()),
                 },
+                &dark_appearance(),
             );
-            assert_eq!(
-                spec.args,
-                vec![
-                    "-d".to_string(),
-                    "Ubuntu".to_string(),
-                    "--cd".to_string(),
-                    "/home/vinicios/repo".to_string(),
-                    "--exec".to_string(),
-                    "env".to_string(),
-                    "TERAX_USER_ZDOTDIR=/home/vinicios/.config/zsh".to_string(),
-                    "ZDOTDIR=/home/vinicios/.cache/terax/shell-integration/zsh".to_string(),
-                    "/usr/bin/zsh".to_string(),
-                    "-l".to_string(),
-                ]
-            );
+            let mut expected = wsl_prefix("/home/vinicios/repo");
+            expected.extend([
+                "TERAX_USER_ZDOTDIR=/home/vinicios/.config/zsh".to_string(),
+                "ZDOTDIR=/home/vinicios/.cache/terax/shell-integration/zsh".to_string(),
+                "/usr/bin/zsh".to_string(),
+                "-l".to_string(),
+            ]);
+            assert_eq!(spec.args, expected);
         }
 
         #[test]
@@ -662,19 +734,11 @@ mod windows {
                 "/usr/bin/zsh",
                 ShellKind::Zsh,
                 WslShellIntegration::None,
+                &dark_appearance(),
             );
-            assert_eq!(
-                spec.args,
-                vec![
-                    "-d".to_string(),
-                    "Ubuntu".to_string(),
-                    "--cd".to_string(),
-                    "/home/vinicios/repo".to_string(),
-                    "--exec".to_string(),
-                    "/usr/bin/zsh".to_string(),
-                    "-l".to_string(),
-                ]
-            );
+            let mut expected = wsl_prefix("/home/vinicios/repo");
+            expected.extend(["/usr/bin/zsh".to_string(), "-l".to_string()]);
+            assert_eq!(spec.args, expected);
         }
 
         #[test]
@@ -687,21 +751,16 @@ mod windows {
                 WslShellIntegration::Bash {
                     rcfile: "/home/vinicios/.cache/terax/shell-integration/bash/bashrc".into(),
                 },
+                &dark_appearance(),
             );
-            assert_eq!(
-                spec.args,
-                vec![
-                    "-d".to_string(),
-                    "Ubuntu".to_string(),
-                    "--cd".to_string(),
-                    "/home/vinicios/repo".to_string(),
-                    "--exec".to_string(),
-                    "/bin/bash".to_string(),
-                    "--rcfile".to_string(),
-                    "/home/vinicios/.cache/terax/shell-integration/bash/bashrc".to_string(),
-                    "-i".to_string(),
-                ]
-            );
+            let mut expected = wsl_prefix("/home/vinicios/repo");
+            expected.extend([
+                "/bin/bash".to_string(),
+                "--rcfile".to_string(),
+                "/home/vinicios/.cache/terax/shell-integration/bash/bashrc".to_string(),
+                "-i".to_string(),
+            ]);
+            assert_eq!(spec.args, expected);
         }
 
         #[test]
@@ -712,19 +771,11 @@ mod windows {
                 "/usr/bin/fish",
                 ShellKind::Fish,
                 WslShellIntegration::Fish,
+                &dark_appearance(),
             );
-            assert_eq!(
-                spec.args,
-                vec![
-                    "-d".to_string(),
-                    "Ubuntu".to_string(),
-                    "--cd".to_string(),
-                    "/home/vinicios/repo".to_string(),
-                    "--exec".to_string(),
-                    "/usr/bin/fish".to_string(),
-                    "-i".to_string(),
-                ]
-            );
+            let mut expected = wsl_prefix("/home/vinicios/repo");
+            expected.extend(["/usr/bin/fish".to_string(), "-i".to_string()]);
+            assert_eq!(spec.args, expected);
         }
 
         #[test]
@@ -735,18 +786,11 @@ mod windows {
                 "/usr/bin/nu",
                 ShellKind::Other,
                 WslShellIntegration::None,
+                &dark_appearance(),
             );
-            assert_eq!(
-                spec.args,
-                vec![
-                    "-d".to_string(),
-                    "Ubuntu".to_string(),
-                    "--cd".to_string(),
-                    "~".to_string(),
-                    "--exec".to_string(),
-                    "/usr/bin/nu".to_string(),
-                ]
-            );
+            let mut expected = wsl_prefix("~");
+            expected.push("/usr/bin/nu".to_string());
+            assert_eq!(spec.args, expected);
         }
     }
 }

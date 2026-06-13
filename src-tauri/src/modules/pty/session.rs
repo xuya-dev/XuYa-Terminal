@@ -9,8 +9,9 @@ use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter};
 
 use super::agent_detect::AgentDetector;
-use super::da_filter::DaFilter;
+use super::da_filter::{DaFilter, TerminalColors};
 use super::shell_init;
+use super::TerminalAppearance;
 use crate::modules::workspace::WorkspaceEnv;
 
 const AGENT_EVENT: &str = "terax:agent-signal";
@@ -49,6 +50,7 @@ pub struct Session {
     pub killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub master: Mutex<Box<dyn MasterPty + Send>>,
+    pub terminal_colors: Arc<Mutex<TerminalColors>>,
 }
 
 impl Drop for Session {
@@ -106,6 +108,7 @@ pub fn spawn(
     cwd: Option<String>,
     workspace: WorkspaceEnv,
     blocks: bool,
+    appearance: TerminalAppearance,
     on_data: Channel<Response>,
     on_exit: Channel<i32>,
 ) -> Result<(Arc<Session>, PtySize), String> {
@@ -121,7 +124,12 @@ pub fn spawn(
     };
     let pair = pty_system.openpty(size).map_err(|e| e.to_string())?;
 
-    let cmd = shell_init::build_command(cwd, workspace, blocks)?;
+    let terminal_colors = Arc::new(Mutex::new(TerminalColors {
+        foreground: appearance.foreground.clone(),
+        background: appearance.background.clone(),
+        cursor: appearance.cursor.clone(),
+    }));
+    let cmd = shell_init::build_command(cwd, workspace, blocks, &appearance)?;
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
 
@@ -156,6 +164,7 @@ pub fn spawn(
         killer: Mutex::new(killer),
         writer: writer.clone(),
         master: Mutex::new(pair.master),
+        terminal_colors: terminal_colors.clone(),
     });
 
     let pending: Arc<(Mutex<Vec<u8>>, Condvar)> =
@@ -210,7 +219,8 @@ pub fn spawn(
                             let _ = app_reader.emit(AGENT_EVENT, t.into_signal(id));
                         });
                         filtered.clear();
-                        da_filter.process(&buf[..n], &mut filtered, |reply| {
+                        let colors = terminal_colors.lock().unwrap().clone();
+                        da_filter.process(&buf[..n], &mut filtered, &colors, |reply| {
                             if let Ok(mut w) = writer_for_da.lock() {
                                 let _ = w.write_all(reply);
                             }
@@ -351,6 +361,11 @@ mod tests {
             killer: Mutex::new(killer),
             writer,
             master: Mutex::new(pair.master),
+            terminal_colors: Arc::new(Mutex::new(TerminalColors {
+                foreground: "#f6f8fa".into(),
+                background: "#0d1117".into(),
+                cursor: "#f6f8fa".into(),
+            })),
         });
 
         assert!(
@@ -399,6 +414,11 @@ mod tests {
             killer: Mutex::new(killer),
             writer,
             master: Mutex::new(pair.master),
+            terminal_colors: Arc::new(Mutex::new(TerminalColors {
+                foreground: "#f6f8fa".into(),
+                background: "#0d1117".into(),
+                cursor: "#f6f8fa".into(),
+            })),
         });
 
         drop_session(session);

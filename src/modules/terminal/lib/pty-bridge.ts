@@ -1,5 +1,9 @@
-import { invoke, Channel } from "@tauri-apps/api/core";
 import { currentWorkspaceEnv } from "@/modules/workspace";
+import {
+  currentTerminalAppearance,
+  type TerminalAppearance,
+} from "@/styles/terminalTheme";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 const textEncoder = new TextEncoder();
 
@@ -12,6 +16,7 @@ export type PtySession = {
   id: number;
   write: (data: string) => Promise<void>;
   resize: (cols: number, rows: number) => Promise<void>;
+  setAppearance: (appearance?: TerminalAppearance) => Promise<void>;
   close: () => Promise<void>;
 };
 
@@ -21,6 +26,7 @@ export async function openPty(
   handlers: PtyHandlers,
   cwd?: string,
   blocks?: boolean,
+  appearance: TerminalAppearance = currentTerminalAppearance(),
 ): Promise<PtySession> {
   // Raw bytes — no base64/JSON round-trip; messages arrive as ArrayBuffer.
   const onData = new Channel<ArrayBuffer>();
@@ -47,6 +53,7 @@ export async function openPty(
     cwd: cwd ?? null,
     workspace: currentWorkspaceEnv(),
     blocks: blocks ?? false,
+    appearance,
     onData,
     onExit,
   });
@@ -59,6 +66,8 @@ export async function openPty(
     // Raw bytes + id header: no JSON round-trip on the per-keystroke path.
     write: (data) => invoke("pty_write", textEncoder.encode(data), { headers }),
     resize: (c, r) => invoke("pty_resize", { id, cols: c, rows: r }),
+    setAppearance: (next = currentTerminalAppearance()) =>
+      invoke("pty_set_appearance", { id, appearance: next }),
     close: async () => {
       if (closed) return;
       closed = true;

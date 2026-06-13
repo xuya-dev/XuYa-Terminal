@@ -4,10 +4,15 @@
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-06-14
+
 ### ✨ Agent 会话恢复 (Agent Session Resume)
 - 新增 Claude Code / Codex / OpenCode 终端标签的会话绑定：自动捕获各 agent 的会话 ID 并随标签持久化，重启或重开标签时用 `claude --resume` / `codex resume` / `opencode --session` 恢复上次对话。
 - 恢复时重新捕获会话 ID，跟踪 agent 分叉出的新会话，避免多次重启后恢复到旧会话。
 - OpenCode 会话改为读取 SQLite（`~/.local/share/opencode/opencode.db`）获取，适配新版存储结构。
+
+### 🐛 终端浅色模式修复 (Terminal Light Mode Fixes)
+- 固定终端区域始终使用深色渲染，并向 Claude Code / Codex / OpenCode 等 TUI 同步深色前景、背景与光标颜色，修复浅色模式下文字、背景和选择态兼容异常。
 
 ## [1.0.3] - 2026-06-13
 

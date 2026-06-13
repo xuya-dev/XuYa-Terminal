@@ -17,6 +17,33 @@ use tauri::ipc::{Channel, Response};
 use crate::modules::workspace::{authorize_user_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
 use session::Session;
 
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalAppearance {
+    pub color_scheme: TerminalColorScheme,
+    pub foreground: String,
+    pub background: String,
+    pub cursor: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalColorScheme {
+    Light,
+    Dark,
+}
+
+impl Default for TerminalAppearance {
+    fn default() -> Self {
+        Self {
+            color_scheme: TerminalColorScheme::Dark,
+            foreground: "#f6f8fa".into(),
+            background: "#0d1117".into(),
+            cursor: "#f6f8fa".into(),
+        }
+    }
+}
+
 pub struct PtyState {
     sessions: RwLock<HashMap<u32, Arc<Session>>>,
     // Starts at 1 so freshly-handed-out ids are never 0, which the frontend
@@ -44,11 +71,13 @@ pub async fn pty_open(
     cwd: Option<String>,
     workspace: Option<WorkspaceEnv>,
     blocks: Option<bool>,
+    appearance: Option<TerminalAppearance>,
     on_data: Channel<Response>,
     on_exit: Channel<i32>,
 ) -> Result<u32, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
     let blocks = blocks.unwrap_or(false);
+    let appearance = appearance.unwrap_or_default();
     authorize_user_spawn_cwd(&registry, cwd.as_deref(), &workspace).map_err(|e| {
         log::warn!("pty_open: cwd rejected: {e}");
         e
@@ -56,7 +85,7 @@ pub async fn pty_open(
     let id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let session = tauri::async_runtime::spawn_blocking(move || {
         session::spawn(
-            id, app, cols, rows, cwd, workspace, blocks, on_data, on_exit,
+            id, app, cols, rows, cwd, workspace, blocks, appearance, on_data, on_exit,
         )
         .map(|(s, _)| s)
     })
@@ -147,6 +176,29 @@ pub fn pty_resize(
             e.to_string()
         });
     result
+}
+
+#[tauri::command]
+pub fn pty_set_appearance(
+    state: tauri::State<PtyState>,
+    id: u32,
+    appearance: TerminalAppearance,
+) -> Result<(), String> {
+    let session = state
+        .sessions
+        .read()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| {
+            log::warn!("pty_set_appearance: unknown id={id}");
+            "no session".to_string()
+        })?;
+    let mut colors = session.terminal_colors.lock().unwrap();
+    colors.foreground = appearance.foreground;
+    colors.background = appearance.background;
+    colors.cursor = appearance.cursor;
+    Ok(())
 }
 
 #[tauri::command]

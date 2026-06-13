@@ -14,7 +14,7 @@ import {
   TerminalIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { OsIcon } from "./OsIcon";
 import { useGitBranch } from "./useGitBranch";
 import { useSystemInfo } from "./useSystemInfo";
@@ -53,7 +53,10 @@ export function WorkspaceInputBar({
 }: Props) {
   const c = useComposer();
   const { resolvedMode, themeId, customThemes } = useTheme();
-  const themeKey = `${resolvedMode}:${themeId}:${customThemes.length}`;
+  const themeKey = useMemo(
+    () => `${resolvedMode}:${themeId}:${JSON.stringify(customThemes)}`,
+    [resolvedMode, themeId, customThemes],
+  );
   const { os, shell } = useSystemInfo();
 
   const controller = useBlockController(isBlockTab ? activeLeafId : null);
@@ -134,7 +137,14 @@ export function WorkspaceInputBar({
     !hasComposer && !isBlockTab ? (
       <AiInputBarConnect onAdd={onConnect} />
     ) : (
-      <div className="shrink-0 border-t border-border/60 bg-card/40 px-3 py-2">
+      <div
+        className={cn(
+          "shrink-0 border-t border-border/60 bg-card/40 px-3 py-2",
+          isBlockTab &&
+            effectiveMode === "shell" &&
+            "dark border-white/10 bg-[var(--terminal-background)] text-[var(--terminal-foreground)]",
+        )}
+      >
         <div className="flex flex-col gap-2 rounded-lg px-1 py-1">
           <ChipsRow
             leading={terminalChips}
@@ -155,7 +165,12 @@ export function WorkspaceInputBar({
           <div className="flex items-end gap-2.5">
             <div className="relative min-w-0 flex-1">
               {isBlockTab && controller && activeLeafId != null && (
-                <div className={cn(effectiveMode !== "shell" && "hidden")}>
+                <div
+                  className={cn(
+                    "dark text-[var(--terminal-foreground)]",
+                    effectiveMode !== "shell" && "hidden",
+                  )}
+                >
                   <Suspense fallback={null}>
                     <ShellInput
                       leafId={activeLeafId}
@@ -248,7 +263,9 @@ function SegButton({
       onClick={onClick}
       className={cn(
         "relative z-10 flex items-center justify-center gap-1 rounded-[5px] px-2.5 py-[3px] font-medium transition-colors",
-        active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+        active
+          ? "text-foreground"
+          : "text-muted-foreground hover:text-foreground",
       )}
     >
       <HugeiconsIcon icon={icon} size={12} strokeWidth={1.75} />
