@@ -2,6 +2,13 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
+## [Unreleased]
+
+### ✨ Agent 会话恢复 (Agent Session Resume)
+- 新增 Claude Code / Codex / OpenCode 终端标签的会话绑定：自动捕获各 agent 的会话 ID 并随标签持久化，重启或重开标签时用 `claude --resume` / `codex resume` / `opencode --session` 恢复上次对话。
+- 恢复时重新捕获会话 ID，跟踪 agent 分叉出的新会话，避免多次重启后恢复到旧会话。
+- OpenCode 会话改为读取 SQLite（`~/.local/share/opencode/opencode.db`）获取，适配新版存储结构。
+
 ## [1.0.3] - 2026-06-13
 
 ### ✨ 额度悬浮详情 (Quota Hover Details)
