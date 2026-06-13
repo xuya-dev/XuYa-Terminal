@@ -2107,11 +2107,13 @@ async fn fetch_balance_provider_quota(
             provider_id,
             &provider.name,
             Some("balance".to_string()),
-            Some("DeepSeek".to_string()),
-            None,
-            None,
-            remaining,
-            Some(unit),
+            QuotaSuccessFields {
+                plan_name: Some("DeepSeek".to_string()),
+                total: None,
+                used: None,
+                remaining,
+                unit: Some(unit),
+            },
         ));
     }
 
@@ -2364,11 +2366,7 @@ fn quota_success_result(
     provider_id: &str,
     provider_name: &str,
     quota_provider_type: Option<String>,
-    plan_name: Option<String>,
-    total: Option<f64>,
-    used: Option<f64>,
-    remaining: Option<f64>,
-    unit: Option<String>,
+    fields: QuotaSuccessFields,
 ) -> AgentProviderQuotaResult {
     AgentProviderQuotaResult {
         tool: tool.to_string(),
@@ -2377,15 +2375,23 @@ fn quota_success_result(
         quota_provider_type,
         configured: true,
         success: true,
-        plan_name,
-        total,
-        used,
-        remaining,
-        unit,
+        plan_name: fields.plan_name,
+        total: fields.total,
+        used: fields.used,
+        remaining: fields.remaining,
+        unit: fields.unit,
         tiers: Vec::new(),
         queried_at: current_unix_secs(),
         error: None,
     }
+}
+
+struct QuotaSuccessFields {
+    plan_name: Option<String>,
+    total: Option<f64>,
+    used: Option<f64>,
+    remaining: Option<f64>,
+    unit: Option<String>,
 }
 
 fn quota_success_result_with_tiers(
@@ -2402,11 +2408,13 @@ fn quota_success_result_with_tiers(
         provider_id,
         provider_name,
         quota_provider_type,
-        plan_name,
-        total,
-        used,
-        remaining,
-        unit,
+        QuotaSuccessFields {
+            plan_name,
+            total,
+            used,
+            remaining,
+            unit,
+        },
     );
     result.tiers = tiers;
     result
