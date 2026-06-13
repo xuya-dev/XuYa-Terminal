@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isTerminalCopyShortcut,
+  isTerminalPasteShortcut,
   terminalDeleteSequence,
   terminalLineNavigationSequence,
   terminalWordNavigationSequence,
@@ -11,6 +13,7 @@ const evt = (partial: Partial<TerminalKeyEvent>): TerminalKeyEvent => ({
   altKey: false,
   ctrlKey: false,
   metaKey: false,
+  shiftKey: false,
   key: "",
   code: "",
   ...partial,
@@ -133,5 +136,48 @@ describe("terminalDeleteSequence", () => {
         { isMac: true },
       ),
     ).toBeNull();
+  });
+});
+
+describe("terminal clipboard shortcuts", () => {
+  it("maps Cmd+C and Cmd+V on macOS", () => {
+    expect(
+      isTerminalCopyShortcut(evt({ metaKey: true, key: "c", code: "KeyC" }), {
+        isMac: true,
+      }),
+    ).toBe(true);
+    expect(
+      isTerminalPasteShortcut(evt({ metaKey: true, key: "v", code: "KeyV" }), {
+        isMac: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("maps Ctrl+Shift+C and Ctrl+Shift+V off macOS", () => {
+    expect(
+      isTerminalCopyShortcut(
+        evt({ ctrlKey: true, shiftKey: true, key: "c", code: "KeyC" }),
+        { isMac: false },
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalPasteShortcut(
+        evt({ ctrlKey: true, shiftKey: true, key: "v", code: "KeyV" }),
+        { isMac: false },
+      ),
+    ).toBe(true);
+  });
+
+  it("does not steal plain Ctrl+C or Ctrl+V from terminals off macOS", () => {
+    expect(
+      isTerminalCopyShortcut(evt({ ctrlKey: true, key: "c", code: "KeyC" }), {
+        isMac: false,
+      }),
+    ).toBe(false);
+    expect(
+      isTerminalPasteShortcut(evt({ ctrlKey: true, key: "v", code: "KeyV" }), {
+        isMac: false,
+      }),
+    ).toBe(false);
   });
 });

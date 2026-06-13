@@ -23,6 +23,8 @@ export type ShortcutId =
   | "pane.focusNext"
   | "pane.focusPrev"
   | "pane.source"
+  | "terminal.copy"
+  | "terminal.paste"
   | "terminal.clear"
   | "terminal.toggleInput"
   | "search.focus"
@@ -154,6 +156,26 @@ export const SHORTCUTS: Shortcut[] = [
     // macOS — on other platforms Ctrl+K is readline's kill-line, so we leave it
     // unbound and let users assign their own in settings.
     defaultBindings: IS_MAC ? [{ meta: true, key: "k" }] : [],
+  },
+  {
+    id: "terminal.copy",
+    label: "复制终端选区",
+    group: "终端",
+    defaultBindings: [
+      IS_MAC
+        ? { meta: true, key: "c" }
+        : { ctrl: true, shift: true, key: "c" },
+    ],
+  },
+  {
+    id: "terminal.paste",
+    label: "粘贴到终端",
+    group: "终端",
+    defaultBindings: [
+      IS_MAC
+        ? { meta: true, key: "v" }
+        : { ctrl: true, shift: true, key: "v" },
+    ],
   },
   {
     id: "terminal.toggleInput",

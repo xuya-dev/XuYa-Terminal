@@ -30,6 +30,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+const FIXED_DISPLAY_SHORTCUTS = new Set<ShortcutId>([
+  "terminal.copy",
+  "terminal.paste",
+]);
+
 export function ShortcutsSection() {
   const userShortcuts = usePreferencesStore((s) => s.shortcuts);
   const [search, setSearch] = useState("");
@@ -129,6 +134,7 @@ export function ShortcutsSection() {
                     onClear={() => onClear(s.id)}
                     onReset={() => onResetShortcut(s.id)}
                     userBindings={userShortcuts[s.id]}
+                    readonly={FIXED_DISPLAY_SHORTCUTS.has(s.id)}
                   />
                 ))}
               </div>
@@ -169,6 +175,7 @@ function ShortcutRow({
   onClear,
   onReset,
   userBindings,
+  readonly = false,
 }: {
   shortcut: Shortcut;
   isRecording: boolean;
@@ -178,6 +185,7 @@ function ShortcutRow({
   onClear: () => void;
   onReset: () => void;
   userBindings?: KeyBinding[];
+  readonly?: boolean;
 }) {
   const bindings =
     userBindings !== undefined ? userBindings : shortcut.defaultBindings;
@@ -196,8 +204,11 @@ function ShortcutRow({
         ) : (
           <>
             <div
-              onClick={onStartRecording}
-              className="flex min-w-[100px] cursor-pointer items-center justify-end gap-1"
+              onClick={readonly ? undefined : onStartRecording}
+              className={[
+                "flex min-w-[100px] items-center justify-end gap-1",
+                readonly ? "cursor-default" : "cursor-pointer",
+              ].join(" ")}
             >
               {hasBindings ? (
                 <KbdGroup>
@@ -217,8 +228,12 @@ function ShortcutRow({
               )}
             </div>
 
-            <div className="flex items-center gap-1">
-              {isModified && (
+            <div className="flex min-w-7 items-center justify-end gap-1">
+              {readonly ? (
+                <span className="text-[10.5px] text-muted-foreground">
+                  固定
+                </span>
+              ) : isModified ? (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -228,16 +243,18 @@ function ShortcutRow({
                 >
                   <HugeiconsIcon icon={ArrowTurnBackwardIcon} size={12} />
                 </Button>
+              ) : null}
+              {!readonly && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-muted-foreground hover:text-destructive opacity-0 transition-opacity group-hover:opacity-100"
+                  onClick={onClear}
+                  title="清除快捷键"
+                >
+                  <HugeiconsIcon icon={Delete02Icon} size={12} />
+                </Button>
               )}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 text-muted-foreground hover:text-destructive opacity-0 transition-opacity group-hover:opacity-100"
-                onClick={onClear}
-                title="清除快捷键"
-              >
-                <HugeiconsIcon icon={Delete02Icon} size={12} />
-              </Button>
             </div>
           </>
         )}

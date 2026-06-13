@@ -13,9 +13,7 @@
         "transparent": false,
         "visible": false,
         "dragDropEnabled": true,
-        "shadow": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "shadow": true
       }
     ]
   }

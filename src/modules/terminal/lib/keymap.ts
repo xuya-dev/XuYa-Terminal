@@ -1,6 +1,6 @@
 export type TerminalKeyEvent = Pick<
   KeyboardEvent,
-  "altKey" | "ctrlKey" | "metaKey" | "key" | "code"
+  "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "key" | "code"
 >;
 
 export type PlatformOpts = { isMac: boolean };
@@ -42,4 +42,24 @@ export function terminalDeleteSequence(
   }
   if (event.ctrlKey && !event.altKey && !event.metaKey) return "\x17";
   return null;
+}
+
+export function isTerminalCopyShortcut(
+  event: TerminalKeyEvent,
+  opts: PlatformOpts,
+): boolean {
+  const isCopyKey = event.code === "KeyC" || event.key === "c" || event.key === "C";
+  if (!isCopyKey || event.altKey) return false;
+  if (opts.isMac) return event.metaKey && !event.ctrlKey && !event.shiftKey;
+  return !!event.ctrlKey && !!event.shiftKey && !event.metaKey;
+}
+
+export function isTerminalPasteShortcut(
+  event: TerminalKeyEvent,
+  opts: PlatformOpts,
+): boolean {
+  const isPasteKey = event.code === "KeyV" || event.key === "v" || event.key === "V";
+  if (!isPasteKey || event.altKey) return false;
+  if (opts.isMac) return event.metaKey && !event.ctrlKey && !event.shiftKey;
+  return !!event.ctrlKey && !!event.shiftKey && !event.metaKey;
 }

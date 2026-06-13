@@ -2,7 +2,11 @@
 
 本文件记录 **XuYa Terminal** 的所有重大版本更新与变动。
 
-## [Unreleased]
+## [1.0.2] - 2026-06-13
+
+### 🐛 macOS 与终端快捷键修复 (macOS & Terminal Shortcuts)
+- macOS 主窗口与设置窗口恢复系统原生标题栏，修复左上角关闭、最小化、最大化按钮仍缺失的问题。
+- 终端复制粘贴快捷键与设置页展示保持一致：macOS 使用 `⌘C` / `⌘V`，Windows 与 Linux 使用 `Ctrl+Shift+C` / `Ctrl+Shift+V`。
 
 ### ✨ Agent 额度查询 (Agent Quota)
 - 底部状态栏恢复 Claude Code / Codex 的代理商额度查询，并按当前 Agent 标签分开展示。

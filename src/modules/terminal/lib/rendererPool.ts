@@ -11,6 +11,8 @@ import { Terminal } from "@xterm/xterm";
 import { shouldCursorBlink } from "./cursorBlink";
 import {
   terminalDeleteSequence,
+  isTerminalCopyShortcut,
+  isTerminalPasteShortcut,
   terminalLineNavigationSequence,
   terminalWordNavigationSequence,
 } from "./keymap";
@@ -1201,25 +1203,11 @@ const IS_MAC =
   /Mac|iPhone|iPad/.test(navigator.userAgent);
 
 function isTerminalCopy(e: KeyboardEvent): boolean {
-  return (
-    !IS_MAC &&
-    e.ctrlKey &&
-    e.shiftKey &&
-    !e.altKey &&
-    !e.metaKey &&
-    (e.code === "KeyC" || e.key === "c" || e.key === "C")
-  );
+  return isTerminalCopyShortcut(e, { isMac: IS_MAC });
 }
 
 function isTerminalPaste(e: KeyboardEvent): boolean {
-  return (
-    !IS_MAC &&
-    e.ctrlKey &&
-    e.shiftKey &&
-    !e.altKey &&
-    !e.metaKey &&
-    (e.code === "KeyV" || e.key === "v" || e.key === "V")
-  );
+  return isTerminalPasteShortcut(e, { isMac: IS_MAC });
 }
 
 function isShiftEnter(e: KeyboardEvent): boolean {

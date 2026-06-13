@@ -56,11 +56,6 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
         .resizable(true)
         .visible(false);
 
-    #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true);
-
     // On Linux/Windows we render our own titlebar, so drop native chrome
     // and make the window transparent.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
