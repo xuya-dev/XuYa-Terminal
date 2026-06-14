@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SectionHeader } from "../components/SectionHeader";
 
 // ── 类型定义 ──────────────────────────────────────────────────────────────
@@ -828,6 +828,12 @@ function ClaudeConfig({
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [customApiKey, setCustomApiKey] = useState("");
   const [customModel, setCustomModel] = useState("");
+  const [customHaikuModel, setCustomHaikuModel] = useState("");
+  const [customHaikuModelName, setCustomHaikuModelName] = useState("");
+  const [customSonnetModel, setCustomSonnetModel] = useState("");
+  const [customSonnetModelName, setCustomSonnetModelName] = useState("");
+  const [customOpusModel, setCustomOpusModel] = useState("");
+  const [customOpusModelName, setCustomOpusModelName] = useState("");
   const [customExtraConfig, setCustomExtraConfig] = useState("");
   const [customQuotaProviderType, setCustomQuotaProviderType] =
     useState<"" | "newapi" | "sub2api">("");
@@ -835,10 +841,16 @@ function ClaudeConfig({
   const [customQuotaUserId, setCustomQuotaUserId] = useState("");
   const [customSaving, setCustomSaving] = useState(false);
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
+  const [customFetchingModels, setCustomFetchingModels] = useState(false);
+  const [customFetchedModels, setCustomFetchedModels] = useState<AgentFetchedModel[]>([]);
+  // 防止保存后 config 变化把主表单字段重置回 activeProvider，覆盖用户的编辑/选择。
+  const initializedRef = useRef(false);
 
   // 回显配置
   useEffect(() => {
     if (config) {
+      if (initializedRef.current) return;
+      initializedRef.current = true;
       setProvider(config.activeProvider || "official");
       setBaseUrl(config.baseUrl || "");
       setApiKey(config.apiKey || "");
@@ -979,12 +991,12 @@ function ClaudeConfig({
       baseUrl: customBaseUrl,
       apiKey: customApiKey,
       model: customModel,
-      haikuModel: "",
-      haikuModelName: "",
-      sonnetModel: "",
-      sonnetModelName: "",
-      opusModel: "",
-      opusModelName: "",
+      haikuModel: customHaikuModel,
+      haikuModelName: customHaikuModelName,
+      sonnetModel: customSonnetModel,
+      sonnetModelName: customSonnetModelName,
+      opusModel: customOpusModel,
+      opusModelName: customOpusModelName,
       baseConfig,
     });
 
@@ -1008,30 +1020,66 @@ function ClaudeConfig({
   useEffect(() => {
     if (!showCustomForm) return;
     setCustomExtraConfig(buildCustomFullConfig(customExtraConfig));
-  }, [showCustomForm, customBaseUrl, customApiKey, customModel]);
+  }, [showCustomForm, customBaseUrl, customApiKey, customModel, customHaikuModel, customHaikuModelName, customSonnetModel, customSonnetModelName, customOpusModel, customOpusModelName]);
 
-  // 保存配置
+  // 把主表单当前编辑的预设写回预设库：自定义 provider 存到自定义库，内置存到内置库。
+  // official 不存（官方走 OAuth，无预设概念）。修复：此前主表单只存内置 provider 预设，
+  // 自定义 provider 在主表单编辑后点保存不会入库，导致切换回来自显空。
+  const saveCurrentPreset = async () => {
+    if (provider === "official") return;
+    const customId = customProviderId(provider);
+    const fields = {
+      baseUrl: baseUrl || undefined,
+      apiKey: apiKey || undefined,
+      model: model || undefined,
+      haikuModel: haikuModel || undefined,
+      haikuModelName: haikuModelName || undefined,
+      sonnetModel: sonnetModel || undefined,
+      sonnetModelName: sonnetModelName || undefined,
+      opusModel: opusModel || undefined,
+      opusModelName: opusModelName || undefined,
+      extraConfig: extraConfig || undefined,
+    };
+    if (customId) {
+      const existing = config?.customProviders.find((c) => c.id === customId);
+      await invoke("save_agent_custom_provider", {
+        request: {
+          tool: "claude",
+          providerId: `custom:${customId}`,
+          name: existing?.name || customId,
+          ...fields,
+        },
+      });
+    } else {
+      await invoke("save_agent_builtin_provider", {
+        request: {
+          tool: "claude",
+          providerId: provider,
+          ...fields,
+        },
+      });
+    }
+  };
+
+  // 保存预设到库（不改动当前生效配置）
   const handleSave = async () => {
     setSaving(true);
     try {
-      if (provider !== "official" && !customProviderId(provider)) {
-        await invoke("save_agent_builtin_provider", {
-          request: {
-            tool: "claude",
-            providerId: provider,
-            baseUrl: baseUrl || undefined,
-            apiKey: apiKey || undefined,
-            model: model || undefined,
-            haikuModel: haikuModel || undefined,
-            haikuModelName: haikuModelName || undefined,
-            sonnetModel: sonnetModel || undefined,
-            sonnetModelName: sonnetModelName || undefined,
-            opusModel: opusModel || undefined,
-            opusModelName: opusModelName || undefined,
-            extraConfig: extraConfig || undefined,
-          },
-        });
-      }
+      await saveCurrentPreset();
+      await onRefresh();
+      alert("预设已保存。");
+    } catch (e) {
+      alert(`保存失败: ${e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 保存预设并切换为当前生效（写入 settings.json）
+  const handleApply = async () => {
+    setSaving(true);
+    try {
+      await saveCurrentPreset();
 
       await invoke("apply_agent_provider_config", {
         request: {
@@ -1050,9 +1098,9 @@ function ClaudeConfig({
         },
       });
       await onRefresh();
-      alert("Claude Code 配置已保存！");
+      alert("已切换为当前生效配置。");
     } catch (e) {
-      alert(`保存失败: ${e}`);
+      alert(`切换失败: ${e}`);
     } finally {
       setSaving(false);
     }
@@ -1083,6 +1131,30 @@ function ClaudeConfig({
     }
   };
 
+  // 拉取自定义服务商可用模型（用 custom 表单的 baseUrl/apiKey）
+  const handleFetchCustomModels = async () => {
+    if (!customBaseUrl) {
+      alert("请先填写基础 URL");
+      return;
+    }
+    setCustomFetchingModels(true);
+    try {
+      const result = await invoke<AgentModelFetchResult>("fetch_agent_provider_models", {
+        request: {
+          tool: "claude",
+          providerId: editingCustomId ? `custom:${editingCustomId}` : "custom",
+          baseUrl: customBaseUrl || undefined,
+          apiKey: customApiKey || undefined,
+        },
+      });
+      setCustomFetchedModels(result.models);
+    } catch (e) {
+      alert(`拉取模型失败: ${e}`);
+    } finally {
+      setCustomFetchingModels(false);
+    }
+  };
+
   // 保存自定义服务商
   const handleSaveCustom = async () => {
     const canReuseKey = canReuseCurrentApiKey(
@@ -1105,6 +1177,12 @@ function ClaudeConfig({
           baseUrl: customBaseUrl,
           apiKey: customApiKey,
           model: customModel || undefined,
+          haikuModel: customHaikuModel || undefined,
+          haikuModelName: customHaikuModelName || undefined,
+          sonnetModel: customSonnetModel || undefined,
+          sonnetModelName: customSonnetModelName || undefined,
+          opusModel: customOpusModel || undefined,
+          opusModelName: customOpusModelName || undefined,
           extraConfig: customExtraConfig || undefined,
           quotaProviderType: customQuotaProviderType || undefined,
           quotaAccessToken: customQuotaAccessToken || undefined,
@@ -1112,10 +1190,26 @@ function ClaudeConfig({
         },
       });
 
+      // 编辑保存后若该 provider 正是当前生效的，重新 apply 让改动立即生效；
+      // 否则只更新预设库，不动当前生效配置。
+      const selector = editingCustomId ? `custom:${editingCustomId}` : undefined;
+      const isActive = selector && config?.activeProvider === selector;
+      if (isActive) {
+        await invoke("apply_agent_provider_config", {
+          request: { tool: "claude", providerId: selector },
+        });
+      }
+
       setCustomName("");
       setCustomBaseUrl("");
       setCustomApiKey("");
       setCustomModel("");
+      setCustomHaikuModel("");
+      setCustomHaikuModelName("");
+      setCustomSonnetModel("");
+      setCustomSonnetModelName("");
+      setCustomOpusModel("");
+      setCustomOpusModelName("");
       setCustomExtraConfig("");
       setCustomQuotaProviderType("");
       setCustomQuotaAccessToken("");
@@ -1148,6 +1242,12 @@ function ClaudeConfig({
     setCustomBaseUrl(config.baseUrl || "");
     setCustomApiKey(nextApiKey);
     setCustomModel(config.model || "");
+    setCustomHaikuModel(config.haikuModel || "");
+    setCustomHaikuModelName(config.haikuModelName || "");
+    setCustomSonnetModel(config.sonnetModel || "");
+    setCustomSonnetModelName(config.sonnetModelName || "");
+    setCustomOpusModel(config.opusModel || "");
+    setCustomOpusModelName(config.opusModelName || "");
     setCustomExtraConfig(
       config.extraConfig ||
         buildClaudeFullConfig({
@@ -1174,7 +1274,14 @@ function ClaudeConfig({
     setCustomName(provider.name);
     setCustomBaseUrl(provider.baseUrl);
     setCustomApiKey(provider.apiKey || "");
+    setCustomFetchedModels([]);
     setCustomModel(provider.model || "");
+    setCustomHaikuModel(provider.haikuModel || "");
+    setCustomHaikuModelName(provider.haikuModelName || "");
+    setCustomSonnetModel(provider.sonnetModel || "");
+    setCustomSonnetModelName(provider.sonnetModelName || "");
+    setCustomOpusModel(provider.opusModel || "");
+    setCustomOpusModelName(provider.opusModelName || "");
     setCustomExtraConfig(provider.extraConfig || "");
     setCustomQuotaProviderType(quotaProviderType(provider.quotaProviderType));
     setCustomQuotaAccessToken(provider.quotaAccessToken || "");
@@ -1236,6 +1343,30 @@ function ClaudeConfig({
     },
   ];
 
+  const customRoleRows = [
+    {
+      ...CLAUDE_ROLE_ROWS[0],
+      model: customOpusModel,
+      modelName: customOpusModelName,
+      setModel: setCustomOpusModel,
+      setModelName: setCustomOpusModelName,
+    },
+    {
+      ...CLAUDE_ROLE_ROWS[1],
+      model: customSonnetModel,
+      modelName: customSonnetModelName,
+      setModel: setCustomSonnetModel,
+      setModelName: setCustomSonnetModelName,
+    },
+    {
+      ...CLAUDE_ROLE_ROWS[2],
+      model: customHaikuModel,
+      modelName: customHaikuModelName,
+      setModel: setCustomHaikuModel,
+      setModelName: setCustomHaikuModelName,
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-4">
       <div className="text-[12px] font-medium">Claude Code 配置</div>
@@ -1275,6 +1406,12 @@ function ClaudeConfig({
               setCustomBaseUrl("");
               setCustomApiKey("");
               setCustomModel("");
+              setCustomHaikuModel("");
+              setCustomHaikuModelName("");
+              setCustomSonnetModel("");
+              setCustomSonnetModelName("");
+              setCustomOpusModel("");
+              setCustomOpusModelName("");
               setCustomExtraConfig("");
               setCustomQuotaProviderType("");
               setCustomQuotaAccessToken("");
@@ -1312,12 +1449,23 @@ function ClaudeConfig({
             </div>
             <div className="flex flex-col gap-2">
               <Label className="text-[10px]">基础 URL</Label>
-              <Input
-                value={customBaseUrl}
-                onChange={(e) => setCustomBaseUrl(e.target.value)}
-                placeholder="https://api.example.com"
-                className="text-[10px]"
-              />
+              <div className="flex gap-2">
+                <Input
+                  value={customBaseUrl}
+                  onChange={(e) => setCustomBaseUrl(e.target.value)}
+                  placeholder="https://api.example.com"
+                  className="text-[10px]"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleFetchCustomModels}
+                  disabled={customFetchingModels || !customBaseUrl}
+                >
+                  {customFetchingModels ? <Spinner className="size-3 mr-1" /> : null}
+                  拉取模型
+                </Button>
+              </div>
             </div>
             <div className="flex flex-col gap-2">
               <Label className="text-[10px]">API 密钥</Label>
@@ -1331,12 +1479,38 @@ function ClaudeConfig({
             </div>
             <div className="flex flex-col gap-2">
               <Label className="text-[10px]">模型（可选）</Label>
-              <Input
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                placeholder="可选"
-                className="text-[10px]"
-              />
+                <ModelValueField
+                  value={customModel}
+                  onChange={setCustomModel}
+                  placeholder="可选"
+                  fetchedModels={customFetchedModels}
+                  className="text-[10px]"
+                />
+            </div>
+            <div className="col-span-2 flex flex-col gap-2">
+              <Label className="text-[11px]">Claude 模型角色（可选）</Label>
+              <div className="overflow-x-auto rounded-lg border border-border/60 bg-card/60 p-2">
+                <div className="grid min-w-[560px] grid-cols-[4.5rem_12rem_12rem_3.5rem] gap-2 px-1 pb-1 text-[10px] text-muted-foreground">
+                  <span>角色</span><span>模型名称</span><span>实际请求模型</span><span className="text-center">1M</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {customRoleRows.map((row) => {
+                    const modelBase = stripOneM(row.model);
+                    const oneM = hasOneM(row.model);
+                    return (
+                      <div key={row.role} className="grid min-w-[560px] grid-cols-[4.5rem_12rem_12rem_3.5rem] items-center gap-2">
+                        <div className="flex h-8 items-center justify-center rounded-md border border-border/60 bg-muted/60 text-[11px] font-semibold text-muted-foreground">{row.label}</div>
+                        <Input value={row.modelName} placeholder={modelBase || "显示在模型菜单中的名称"} onChange={(e) => row.setModelName(e.target.value)} className="h-8 text-[11px]" />
+                        <ModelValueField value={modelBase} placeholder={row.placeholder} onChange={(value) => updateClaudeRoleModel(row.model, row.modelName, row.setModel, row.setModelName, value)} fetchedModels={customFetchedModels} className="h-8 text-[11px]" />
+                        <label className="flex h-8 items-center justify-center gap-1 rounded-md border border-border/60 bg-muted/40 text-[10px] text-muted-foreground">
+                          <Checkbox checked={oneM} onCheckedChange={(checked) => row.setModel(setOneM(row.model, checked === true))} />
+                          1M
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
             <div className="col-span-2 flex flex-col gap-2">
               <Label className="text-[10px]">完整 settings.json（可选）</Label>
@@ -1411,6 +1585,12 @@ function ClaudeConfig({
                   setCustomBaseUrl("");
                   setCustomApiKey("");
                   setCustomModel("");
+                  setCustomHaikuModel("");
+                  setCustomHaikuModelName("");
+                  setCustomSonnetModel("");
+                  setCustomSonnetModelName("");
+                  setCustomOpusModel("");
+                  setCustomOpusModelName("");
                   setCustomExtraConfig("");
                   setCustomQuotaProviderType("");
                   setCustomQuotaAccessToken("");
@@ -1628,11 +1808,17 @@ function ClaudeConfig({
             )}
           </div>
 
-          {/* 保存按钮 */}
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? <Spinner className="size-4 mr-2" /> : null}
-            保存配置
-          </Button>
+          {/* 保存 / 切换 */}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleSave} disabled={saving}>
+              {saving ? <Spinner className="size-4 mr-2" /> : null}
+              保存配置
+            </Button>
+            <Button onClick={handleApply} disabled={saving}>
+              {saving ? <Spinner className="size-4 mr-2" /> : null}
+              切换配置
+            </Button>
+          </div>
         </>
       )}
     </div>
@@ -1898,6 +2084,15 @@ function CodexConfig({
           quotaUserId: customQuotaUserId || undefined,
         },
       });
+
+      // 编辑保存后若该 provider 正是当前生效的，重新 apply 让改动立即生效。
+      const selector = editingCustomId ? `custom:${editingCustomId}` : undefined;
+      const isActive = selector && config?.activeProvider === selector;
+      if (isActive) {
+        await invoke("apply_agent_provider_config", {
+          request: { tool: "codex", providerId: selector },
+        });
+      }
 
       setCustomName("");
       setCustomBaseUrl("");
