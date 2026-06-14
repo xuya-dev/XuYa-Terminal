@@ -10,6 +10,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState } from "react";
+import { Streamdown } from "streamdown";
 import { useUpdater } from "./useUpdater";
 
 type DistroKey = "arch" | "debian" | "fedora";
@@ -104,9 +105,21 @@ export function UpdaterDialog() {
                   : formatBytes(status.downloaded)
                 : manual
                   ? `当前版本 v${manual.currentVersion}。选择你的发行版并运行命令，或从 GitHub 获取安装包。`
-                  : update?.body || "新版本已准备好安装。"}
+                  : "发现新版本，以下是本次更新内容。"}
           </DialogDescription>
         </DialogHeader>
+
+        {/* Release notes arrive as Markdown (Tauri updater body / GitHub release
+            body). Render via Streamdown in a scrollable region so a long
+            changelog can't blow up the dialog. Hidden while downloading/ready
+            where only progress matters. */}
+        {!ready && !downloading && (update?.body || manual?.body) && (
+          <div className="max-h-[260px] overflow-auto rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[13px]">
+            <Streamdown className="select-text prose-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+              {(update?.body ?? manual?.body) as string}
+            </Streamdown>
+          </div>
+        )}
 
         {downloading && progress !== null && (
           <Progress value={progress} className="mt-2" />
