@@ -1,6 +1,6 @@
 import { submitToLeaf, whenSessionReady } from "./useTerminalSession";
 import { agentBareCommand, agentResumeCommand, type AgentType } from "./agentResume";
-import { captureAgentSession } from "./agentSessionCapture";
+import { captureAgentSession, claimAgentSession } from "./agentSessionCapture";
 
 export type LaunchAgentOpts = {
   /** When set, resume this exact session instead of starting fresh. */
@@ -41,6 +41,9 @@ export async function launchAgentInLeaf(
   opts: LaunchAgentOpts = {},
 ): Promise<void> {
   await whenSessionReady(leafId);
+  // A resumed/restored session already belongs to this leaf — claim it so a
+  // concurrently-launched agent in the same cwd can't capture it.
+  if (opts.sessionId) claimAgentSession(opts.sessionId);
   const command = opts.sessionId
     ? agentResumeCommand(agent, opts.sessionId)
     : agentBareCommand(agent);
