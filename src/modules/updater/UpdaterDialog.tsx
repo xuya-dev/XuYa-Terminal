@@ -9,8 +9,14 @@ import {
 } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useState } from "react";
-import { Streamdown } from "streamdown";
+import { Suspense, lazy, useState } from "react";
+
+// Lazy-loaded so streamdown (a heavy markdown renderer) stays out of the
+// startup eager bundle (see src/app/eager-budget.test.ts). Only pays the cost
+// when the release-notes region actually renders.
+const Streamdown = lazy(() =>
+  import("streamdown").then((m) => ({ default: m.Streamdown })),
+);
 import { useUpdater } from "./useUpdater";
 
 type DistroKey = "arch" | "debian" | "fedora";
@@ -115,9 +121,11 @@ export function UpdaterDialog() {
             where only progress matters. */}
         {!ready && !downloading && (update?.body || manual?.body) && (
           <div className="max-h-[260px] overflow-auto rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[13px]">
-            <Streamdown className="select-text prose-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-              {(update?.body ?? manual?.body) as string}
-            </Streamdown>
+            <Suspense fallback={(update?.body ?? manual?.body) as string}>
+              <Streamdown className="select-text prose-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                {(update?.body ?? manual?.body) as string}
+              </Streamdown>
+            </Suspense>
           </div>
         )}
 
