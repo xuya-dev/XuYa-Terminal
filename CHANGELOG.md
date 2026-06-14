@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-06-14
+
+### 🐛 终端唤醒与多窗口会话修复 (Terminal Wake & Multi-window Session Fixes)
+- 修复新建终端 / Agent 偶发只开框不唤醒：PTY 句柄赋值前(invoke pty_open 尚未 resolve),后端已通过 Channel 推送 shell 的启动查询字节;此时已绑定的 xterm 解析查询并生成回复,经 `s.pty?.write` 写回时句柄仍为 null 而被静默丢弃,导致 PSReadLine 永久等待回复、提示符永不渲染。新增 `pendingWrites` 写入队列:句柄就绪前的回写先入队,`ensurePtyOpen` / `respawnSession` 拿到句柄后立即按序冲刷,回复不再丢失;挂载即拉起 shell,绑定包 try/catch 容器 ref 未就绪时短重试,槽位揭示加挂钟兜底。
+- 修复多窗口 / 多标签在同一目录下启动 Agent 时会话互相抢占：同 cwd 下两个 agent 原本都抢到最新会话 id,重开后双双 resume 到同一段对话。新增会话 ID 领用注册表(`claimedSessions`):resume / restore 与首次捕获成功时立即领用,轮询每轮将已领用集合合并进 excludeIds 一并排除,request 与 resolve 之间再做领用校验,确保每个 leaf 绑定各自会话。
+
 ## [1.0.4] - 2026-06-14
 
 ### ✨ Agent 会话恢复 (Agent Session Resume)
