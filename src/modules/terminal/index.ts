@@ -12,6 +12,7 @@ export {
 } from "./lib/useTerminalSession";
 export { useTerminalFileDrop } from "./lib/useTerminalFileDrop";
 export {
+  findLeafAgentSession,
   findLeafCwd,
   hasLeaf,
   isLeaf,

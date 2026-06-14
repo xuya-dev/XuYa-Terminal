@@ -14,6 +14,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { CwdBreadcrumb } from "./CwdBreadcrumb";
 import { WorkspaceEnvSelector } from "./WorkspaceEnvSelector";
 import { AgentQuotaStatus } from "./AgentQuotaStatus";
+import { AgentConfigSwitcher } from "./AgentConfigSwitcher";
 import type { WorkspaceEnv } from "@/modules/workspace";
 
 type AgentQuotaTool = "claude" | "codex";
@@ -29,6 +30,12 @@ type Props = {
   hasComposer: boolean;
   privateActive: boolean;
   agentTool: AgentQuotaTool | null;
+  /** Active leaf of the current tab — null hides the provider switcher. */
+  activeLeafId: number | null;
+  /** Session id bound to the active leaf (for resuming after a switch). */
+  activeAgentSessionId?: string;
+  /** Bind a discovered session id back to a leaf. */
+  onAgentSessionCaptured: (leafId: number, sessionId: string) => void;
 };
 
 export function StatusBar({
@@ -41,6 +48,9 @@ export function StatusBar({
   hasComposer,
   privateActive,
   agentTool,
+  activeLeafId,
+  activeAgentSessionId,
+  onAgentSessionCaptured,
 }: Props) {
   const panelOpen = useChatStore((s) => s.panelOpen);
   const openPanel = useChatStore((s) => s.openPanel);
@@ -65,6 +75,15 @@ export function StatusBar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        {agentTool && activeLeafId != null ? (
+          <AgentConfigSwitcher
+            tool={agentTool}
+            leafId={activeLeafId}
+            agentSessionId={activeAgentSessionId}
+            cwd={cwd}
+            onSessionCaptured={(id) => onAgentSessionCaptured(activeLeafId, id)}
+          />
+        ) : null}
         <AgentQuotaStatus tool={agentTool} />
         <AgentStatusPill onClick={onOpenMini} />
         {panelOpen && hasComposer ? (

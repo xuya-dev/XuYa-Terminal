@@ -1,4 +1,4 @@
-import {
+﻿import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -64,6 +64,7 @@ import {
 import {
   clearFocusedTerminal,
   disposeSession,
+  findLeafAgentSession,
   findLeafCwd,
   hasLeaf,
   leafIds,
@@ -146,6 +147,10 @@ export default function App() {
     return t && t.kind === "terminal" ? t : null;
   }, [tabs, activeId]);
   const activeLeafId = activeTerminalTab?.activeLeafId ?? null;
+  const activeAgentSessionId =
+    activeTerminalTab && activeLeafId !== null
+      ? findLeafAgentSession(activeTerminalTab.paneTree, activeLeafId)
+      : undefined;
 
   const searchAddons = useRef<Map<number, SearchAddon>>(new Map());
   const [activeSearchAddon, setActiveSearchAddon] =
@@ -1211,6 +1216,9 @@ export default function App() {
                 activeTab?.kind === "terminal" && activeTab.private === true
               }
               agentTool={activeAgentQuotaTool}
+              activeLeafId={activeLeafId}
+              activeAgentSessionId={activeAgentSessionId}
+              onAgentSessionCaptured={setLeafAgentSession}
             />
           )}
 
