@@ -13,6 +13,19 @@ export type LaunchAgentOpts = {
   onSessionCaptured?: (sessionId: string) => void;
 };
 
+async function submitWhenWritable(
+  leafId: number,
+  command: string,
+  timeoutMs = 7000,
+): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (submitToLeaf(leafId, command)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  return submitToLeaf(leafId, command);
+}
+
 /**
  * Launch (or resume) an agent inside a terminal leaf. Waits for the PTY to be
  * ready, writes the startup command, then polls for the live session id.
@@ -31,7 +44,11 @@ export async function launchAgentInLeaf(
   const command = opts.sessionId
     ? agentResumeCommand(agent, opts.sessionId)
     : agentBareCommand(agent);
-  submitToLeaf(leafId, command);
+  const submitted = await submitWhenWritable(leafId, command);
+  if (!submitted) {
+    console.warn("[terax] agent launch command could not be submitted", leafId);
+    return;
+  }
 
   if (opts.onSessionCaptured) {
     const excludeIds = opts.sessionId

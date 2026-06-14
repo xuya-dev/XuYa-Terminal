@@ -90,6 +90,14 @@ type Session = {
   spawnFailed: boolean;
   gotBytes: boolean;
   stallRespawned: boolean;
+  // Bytes the renderer wants to send to the shell (xterm query replies,
+  // keystrokes) that arrived before the PTY handle was assigned. The backend
+  // streams the shell's startup output over the Channel *before*
+  // invoke("pty_open") resolves, so a bound xterm can parse the shell's
+  // startup query and emit its reply while `pty` is still null. Dropping that
+  // reply hangs PSReadLine (blank box that never wakes). We queue and flush it
+  // the moment the PTY handle lands.
+  pendingWrites: string[];
 };
 
 const sessions = new Map<number, Session>();
@@ -141,12 +149,13 @@ export function writeToSession(leafId: number, data: string): boolean {
   return true;
 }
 
-export function submitToLeaf(leafId: number, text: string): void {
+export function submitToLeaf(leafId: number, text: string): boolean {
   const pty = sessions.get(leafId)?.pty;
-  if (!pty) return;
+  if (!pty) return false;
   // Bracketed paste keeps a multiline command atomic; trailing CR runs it.
   if (text.includes("\n")) pty.write(`\x1b[200~${text}\x1b[201~\r`);
   else pty.write(`${text}\r`);
+  return true;
 }
 
 export function interruptLeaf(leafId: number): void {
@@ -328,7 +337,14 @@ configureRendererPool({
           if (data.includes("\r")) void respawnSession(leafId);
           return;
         }
-        s.pty?.write(data);
+        if (s.pty) {
+          s.pty.write(data);
+        } else if (!s.shellExited) {
+          // PTY handle not assigned yet — queue (xterm's reply to the shell's
+          // startup query lands here; dropping it hangs the shell). Flushed by
+          // ensurePtyOpen / respawnSession once the handle arrives.
+          s.pendingWrites.push(data);
+        }
       },
       resizePty: (cols, rows) => {
         s.cols = cols;
@@ -416,12 +432,18 @@ function ensureSession(
     spawnFailed: false,
     gotBytes: false,
     stallRespawned: false,
+    pendingWrites: [],
   };
   sessions.set(leafId, session);
 
   session.ready = (async () => {
-    await ensureMonoFontsLoaded();
-    await document.fonts.ready;
+    await Promise.race([
+      Promise.all([
+        ensureMonoFontsLoaded(),
+        document.fonts?.ready ?? Promise.resolve(),
+      ]),
+      new Promise<void>((resolve) => setTimeout(resolve, 2500)),
+    ]);
   })();
 
   return session;
@@ -606,6 +628,39 @@ function unbindLeafFromSlot(leafId: number, s: Session): void {
   s.hasSlot = false;
 }
 
+// Flush bytes that the renderer queued while the PTY handle was still being
+// assigned (see Session.pendingWrites). Order-preserving.
+function flushPendingWrites(s: Session, pty: PtySession): void {
+  if (s.pendingWrites.length === 0) return;
+  const queued = s.pendingWrites;
+  s.pendingWrites = [];
+  for (const d of queued) pty.write(d);
+}
+
+// Start the shell for this leaf. The PTY needs neither fonts nor a measured
+// container, so this must NEVER be gated behind the font-ready promise or the
+// renderer-slot bind — doing so is what left a freshly-opened tab as a dead box
+// when fonts were slow or the bind threw. Idempotent and safe to call eagerly.
+function ensurePtyOpen(leafId: number, s: Session): void {
+  if (s.pty || s.ptyOpening || s.shellExited || s.disposed) return;
+  s.ptyOpening = true;
+  openPtyWithRetry(leafId, s, s.initialCwd)
+    .then((pty) => {
+      s.ptyOpening = false;
+      if (s.disposed) {
+        pty.close();
+        return;
+      }
+      s.pty = pty;
+      if (s.cols > 0 && s.rows > 0) pty.resize(s.cols, s.rows);
+      flushPendingWrites(s, pty);
+    })
+    .catch((e) => {
+      s.ptyOpening = false;
+      if (!s.disposed) surfaceSpawnFailure(leafId, s, e);
+    });
+}
+
 function attachSession(
   leafId: number,
   container: HTMLDivElement,
@@ -616,24 +671,17 @@ function attachSession(
   s.callbacks = callbacks;
   s.container = container;
 
-  if (s.visibleNow) bindLeafToSlot(leafId, s);
+  // Spawn first so a throw inside bind (fit/WebGL/renderer) can never stop the
+  // shell from starting. openPty is async — no output can arrive before the
+  // synchronous bind below finishes registering its OSC handlers.
+  ensurePtyOpen(leafId, s);
 
-  if (!s.pty && !s.ptyOpening && !s.shellExited) {
-    s.ptyOpening = true;
-    openPtyWithRetry(leafId, s, s.initialCwd)
-      .then((pty) => {
-        s.ptyOpening = false;
-        if (s.disposed) {
-          pty.close();
-          return;
-        }
-        s.pty = pty;
-        if (s.cols > 0 && s.rows > 0) pty.resize(s.cols, s.rows);
-      })
-      .catch((e) => {
-        s.ptyOpening = false;
-        if (!s.disposed) surfaceSpawnFailure(leafId, s, e);
-      });
+  if (s.visibleNow) {
+    try {
+      bindLeafToSlot(leafId, s);
+    } catch (e) {
+      console.error("[terax] bindLeafToSlot failed for leaf", leafId, e);
+    }
   }
 }
 
@@ -661,6 +709,7 @@ export async function respawnSession(
   s.commandRunning = false;
   s.spawnFailed = false;
   s.gotBytes = false;
+  s.pendingWrites = [];
   cancelHiddenRelease(s);
 
   const slot = getSlotForLeaf(leafId);
@@ -688,6 +737,7 @@ export async function respawnSession(
   }
   s.pty = pty;
   if (s.cols > 0 && s.rows > 0) pty.resize(s.cols, s.rows);
+  flushPendingWrites(s, pty);
 }
 
 export async function leafHasForegroundProcess(
@@ -768,17 +818,34 @@ export function useTerminalSession({
   useEffect(() => {
     let cancelled = false;
     const s = ensureSession(leafId, initialCwdRef.current, blocks);
-    s.ready.then(() => {
+
+    // Spawn the shell right away — independent of font loading and of whether
+    // the container ref has committed yet. A live tab must never sit behind a
+    // shell that was never started.
+    ensurePtyOpen(leafId, s);
+
+    // Bind the renderer slot once fonts are ready (correct first fit). The
+    // container ref can lag the first ready tick under concurrent rendering, so
+    // retry briefly rather than bailing forever — a missed attach used to strip
+    // the slot bind permanently, leaving the "opened a box but never woke" tab.
+    // Run on rejection too: a stuck/failed font gate must not swallow the bind.
+    let attempts = 0;
+    const attach = () => {
       if (cancelled || s.disposed) return;
       const node = container.current;
-      if (!node) return;
+      if (!node) {
+        if (attempts++ < 120) setTimeout(attach, 16);
+        return;
+      }
       attachSession(leafId, node, {
         onSearchReady: (a) => cbRef.current.onSearchReady?.(a),
         onExit: (c) => cbRef.current.onExit?.(c),
         onCwd: (c) => cbRef.current.onCwd?.(c),
       });
       if (s.visibleNow && s.focusedNow && !s.blocks) focusSlot(leafId);
-    });
+    };
+    s.ready.then(attach, attach);
+
     return () => {
       cancelled = true;
       detachSession(leafId);

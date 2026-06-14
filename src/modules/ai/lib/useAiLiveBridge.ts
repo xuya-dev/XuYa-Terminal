@@ -27,6 +27,19 @@ async function waitForClaudeTuiReady(
   return "timeout";
 }
 
+async function writeWhenSessionWritable(
+  leafId: number,
+  data: string,
+  timeoutMs = 7000,
+): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (writeToSession(leafId, data)) return true;
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  return writeToSession(leafId, data);
+}
+
 type Params = {
   setLive: (live: Live) => void;
   activeId: number;
@@ -131,7 +144,7 @@ export function useAiLiveBridge(params: Params) {
         const hooksReady = invoke("agent_enable_claude_hooks").catch(() => {});
         void (async () => {
           await Promise.all([whenSessionReady(leafId), hooksReady]);
-          if (!writeToSession(leafId, "claude\r")) {
+          if (!(await writeWhenSessionWritable(leafId, "claude\r"))) {
             useManagedAgentsStore.getState().remove(leafId);
             return;
           }

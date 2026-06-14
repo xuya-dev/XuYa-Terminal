@@ -63,6 +63,10 @@ export type Slot = {
   webglReapTimer: ReturnType<typeof setTimeout> | null;
   slotReapTimer: ReturnType<typeof setTimeout> | null;
   unhideRaf: number | null;
+  // Wall-clock fallback for the unhide reveal: rAF is paused while the WebView
+  // isn't painting, so the double-rAF alone can leave a freshly-bound host
+  // stuck at visibility:hidden forever (a live PTY behind a blank box).
+  unhideTimer: ReturnType<typeof setTimeout> | null;
   lastCols: number;
   lastRows: number;
   lastW: number;
@@ -261,6 +265,7 @@ function createSlot(): Slot {
     webglReapTimer: null,
     slotReapTimer: null,
     unhideRaf: null,
+    unhideTimer: null,
     lastCols: term.cols,
     lastRows: term.rows,
     lastW: 0,
@@ -556,21 +561,38 @@ function bindSlot(slot: Slot, p: AcquireParams): void {
   p.onSearchReady(slot.searchAddon);
 }
 
+// Reveal latency budget for the double-rAF path before the wall-clock
+// fallback forces the host visible. Two frames at 60Hz is ~33ms; 200ms
+// covers slow frames while staying imperceptible if rAF was merely late.
+const UNHIDE_FALLBACK_MS = 200;
+
 function scheduleUnhide(slot: Slot, stale: boolean): void {
+  // The reveal runs at most once: whichever of the double-rAF or the
+  // wall-clock fallback fires first wins and cancels the other. The fallback
+  // exists because rAF is suspended whenever the WebView isn't painting
+  // (occluded window, GPU stall, tab-open layout churn) — without it a
+  // freshly-bound host can sit at visibility:hidden indefinitely.
+  const reveal = () => {
+    if (slot.unhideRaf === null && slot.unhideTimer === null) return;
+    cancelPendingUnhide(slot);
+    slot.host.style.visibility = "";
+    if (stale) {
+      if (!slot.webglAddon) attachWebgl(slot);
+      try {
+        slot.term.refresh(0, slot.term.rows - 1);
+      } catch {}
+    }
+    const leafId = slot.currentLeafId;
+    if (leafId !== null && adapter?.isLeafFocused(leafId)) {
+      slot.term.focus();
+    }
+  };
+
+  slot.unhideTimer = setTimeout(reveal, UNHIDE_FALLBACK_MS);
   slot.unhideRaf = requestAnimationFrame(() => {
     slot.unhideRaf = requestAnimationFrame(() => {
       slot.unhideRaf = null;
-      slot.host.style.visibility = "";
-      if (stale) {
-        if (!slot.webglAddon) attachWebgl(slot);
-        try {
-          slot.term.refresh(0, slot.term.rows - 1);
-        } catch {}
-      }
-      const leafId = slot.currentLeafId;
-      if (leafId !== null && adapter?.isLeafFocused(leafId)) {
-        slot.term.focus();
-      }
+      reveal();
     });
   });
 }
@@ -579,6 +601,10 @@ function cancelPendingUnhide(slot: Slot): void {
   if (slot.unhideRaf !== null) {
     cancelAnimationFrame(slot.unhideRaf);
     slot.unhideRaf = null;
+  }
+  if (slot.unhideTimer !== null) {
+    clearTimeout(slot.unhideTimer);
+    slot.unhideTimer = null;
   }
 }
 

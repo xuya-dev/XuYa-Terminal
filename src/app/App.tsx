@@ -462,19 +462,29 @@ export default function App() {
     [activeLeafId],
   );
 
+  const submitToLeafWhenWritable = useCallback(
+    async (leafId: number, data: string, timeoutMs = 7000): Promise<boolean> => {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        if (submitToLeaf(leafId, data)) {
+          terminalRefs.current.get(leafId)?.focus();
+          return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+      const submitted = submitToLeaf(leafId, data);
+      if (submitted) terminalRefs.current.get(leafId)?.focus();
+      return submitted;
+    },
+    [],
+  );
+
   const cdInNewTab = useCallback(
     (path: string) => {
-      const tabId = newTab(path);
-      setTimeout(() => {
-        const tab = tabsRef.current.find((x) => x.id === tabId);
-        if (!tab || tab.kind !== "terminal") return;
-        const t = terminalRefs.current.get(tab.activeLeafId);
-        if (!t) return;
-        t.write(`cd ${quoteShellArg(path)}\r`);
-        t.focus();
-      }, 80);
+      const { leafId } = newTab(path);
+      void submitToLeafWhenWritable(leafId, `cd ${quoteShellArg(path)}`);
     },
-    [newTab],
+    [newTab, submitToLeafWhenWritable],
   );
 
   /**
@@ -514,20 +524,24 @@ export default function App() {
       }
 
       // Plain shell session (PowerShell / CMD / ...).
-      const tabId = newTab(cwd);
-      const tab = tabsRef.current.find((x) => x.id === tabId);
-      const leafId = tab?.kind === "terminal" ? tab.activeLeafId : 0;
+      const { leafId } = newTab(cwd);
       try {
         await whenSessionReady(leafId, 5000);
       } catch (e) {
         console.warn("[launchSession] Session ready timeout:", e);
       }
-      submitToLeaf(leafId, command);
-      setTimeout(() => {
-        terminalRefs.current.get(leafId)?.focus();
-      }, 50);
+      const submitted = await submitToLeafWhenWritable(leafId, command);
+      if (!submitted) {
+        console.warn("[launchSession] terminal handle not ready:", leafId);
+      }
     },
-    [newTab, newAgentTab, inheritedCwdForNewTab, setLeafAgentSession],
+    [
+      newTab,
+      newAgentTab,
+      inheritedCwdForNewTab,
+      setLeafAgentSession,
+      submitToLeafWhenWritable,
+    ],
   );
 
   const handleOpenFile = useCallback(
