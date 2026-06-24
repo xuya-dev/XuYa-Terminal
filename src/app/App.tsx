@@ -724,38 +724,47 @@ export default function App() {
       if (id === "editor.undo" || id === "editor.redo") {
         return activeTab?.kind !== "editor";
       }
+
+      // 终端聚焦时，部分快捷键会与 shell/readline/CLI（vim、tmux、Claude Code 等）
+      // 冲突，此时放行让按键直达终端，而非被全局层（capture 阶段）吞掉。
+      const isTerminalFocused = () => {
+        const target = (e.target as HTMLElement | null) ?? document.activeElement;
+        return !!(target as HTMLElement | null)?.closest?.(".xterm");
+      };
+
+      // 这些键在终端内交给终端/shell/CLI 处理，避免抢走原生终端习惯。
+      const deferInTerminal: ReadonlySet<ShortcutId> = new Set<ShortcutId>([
+        "tab.new", // Ctrl+T：tmux 前缀、shell 字符互换
+        "tab.newEditor", // Ctrl+E：emacs/readline 行尾
+        "pane.splitRight", // Ctrl+D：EOF / 退出 shell
+        "pane.source", // Ctrl+G：readline abort
+        "terminal.toggleInput", // Ctrl+U：readline 删除至行首
+        "search.focus", // Ctrl+F：shell 前向搜索 / vim
+        "ai.toggle", // Ctrl+I（等价 Tab）：终端补全
+        "tab.next", // Ctrl+Tab：部分 TUI 需要制表符
+        "tab.prev", // Ctrl+Shift+Tab
+      ]);
+      if (deferInTerminal.has(id)) {
+        return isTerminalFocused();
+      }
+
       if (id === "ai.askSelection") {
-        const target =
-          (e.target as HTMLElement | null) ?? document.activeElement;
-        const inTerminal = !!(target as HTMLElement | null)?.closest?.(
-          ".xterm",
-        );
-        if (!inTerminal) return false;
+        if (!isTerminalFocused()) return false;
         const sel = captureActiveSelection();
         return !sel || !sel.trim();
       }
       if (id === "terminal.clear") {
         // Only intercept ⌘K while a terminal is focused; elsewhere let the key
         // fall through (we never preventDefault when disabled).
-        const target =
-          (e.target as HTMLElement | null) ?? document.activeElement;
-        return !(target as HTMLElement | null)?.closest?.(".xterm");
-      }
-      if (id === "terminal.toggleInput") {
-        return !(activeTab?.kind === "terminal" && activeTab.blocks === true);
+        return !isTerminalFocused();
       }
       if (id === "sidebar.toggle") {
         // Ctrl+B is also Claude Code's "run in background" key. While a terminal
         // is focused, let Ctrl+B reach the shell/Claude instead of toggling the
         // sidebar. Ctrl+Shift+B (second binding) still toggles it from anywhere.
-        const target =
-          (e.target as HTMLElement | null) ?? document.activeElement;
-        const inTerminal = !!(target as HTMLElement | null)?.closest?.(
-          ".xterm",
-        );
         // Only defer the plain (no-shift) Ctrl/⌘+B binding; the Shift variant
         // is the always-on toggle and is never claimed by the terminal.
-        return inTerminal && !e.shiftKey;
+        return isTerminalFocused() && !e.shiftKey;
       }
       return false;
     },
