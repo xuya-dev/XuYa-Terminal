@@ -15,6 +15,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
+import { ApiKeyInput } from "../components/ApiKeyInput";
 import { SectionHeader } from "../components/SectionHeader";
 
 // ── 类型定义 ──────────────────────────────────────────────────────────────
@@ -843,6 +844,9 @@ function ClaudeConfig({
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [customFetchingModels, setCustomFetchingModels] = useState(false);
   const [customFetchedModels, setCustomFetchedModels] = useState<AgentFetchedModel[]>([]);
+  // 添加服务商表单来源：若选中内置服务商模板，则保存为内置服务商（save_agent_builtin_provider），
+  // 否则为纯自定义服务商（save_agent_custom_provider）。
+  const [builtinTemplateId, setBuiltinTemplateId] = useState<string | null>(null);
   // 防止保存后 config 变化把主表单字段重置回 activeProvider，覆盖用户的编辑/选择。
   const initializedRef = useRef(false);
 
@@ -1155,6 +1159,28 @@ function ClaudeConfig({
     }
   };
 
+  // 选择内置服务商模板：回显名称与 baseUrl，标记为内置服务商来源，用户只需补填 KEY 与模型。
+  const handleSelectBuiltinTemplate = (template: BuiltInProvider) => {
+    setEditingCustomId(null);
+    setBuiltinTemplateId(template.id);
+    setCustomName(template.name);
+    setCustomBaseUrl(template.baseUrl);
+    setCustomApiKey("");
+    setCustomFetchedModels([]);
+    setCustomModel("");
+    setCustomHaikuModel("");
+    setCustomHaikuModelName("");
+    setCustomSonnetModel("");
+    setCustomSonnetModelName("");
+    setCustomOpusModel("");
+    setCustomOpusModelName("");
+    setCustomExtraConfig("");
+    setCustomQuotaProviderType("");
+    setCustomQuotaAccessToken("");
+    setCustomQuotaUserId("");
+    setShowCustomForm(true);
+  };
+
   // 保存自定义服务商
   const handleSaveCustom = async () => {
     const canReuseKey = canReuseCurrentApiKey(
@@ -1169,30 +1195,48 @@ function ClaudeConfig({
 
     setCustomSaving(true);
     try {
-      await invoke("save_agent_custom_provider", {
-        request: {
-          tool: "claude",
-          providerId: editingCustomId ? `custom:${editingCustomId}` : undefined,
-          name: customName,
-          baseUrl: customBaseUrl,
-          apiKey: customApiKey,
-          model: customModel || undefined,
-          haikuModel: customHaikuModel || undefined,
-          haikuModelName: customHaikuModelName || undefined,
-          sonnetModel: customSonnetModel || undefined,
-          sonnetModelName: customSonnetModelName || undefined,
-          opusModel: customOpusModel || undefined,
-          opusModelName: customOpusModelName || undefined,
-          extraConfig: customExtraConfig || undefined,
-          quotaProviderType: customQuotaProviderType || undefined,
-          quotaAccessToken: customQuotaAccessToken || undefined,
-          quotaUserId: customQuotaUserId || undefined,
-        },
-      });
+      const fields = {
+        apiKey: customApiKey || undefined,
+        model: customModel || undefined,
+        haikuModel: customHaikuModel || undefined,
+        haikuModelName: customHaikuModelName || undefined,
+        sonnetModel: customSonnetModel || undefined,
+        sonnetModelName: customSonnetModelName || undefined,
+        opusModel: customOpusModel || undefined,
+        opusModelName: customOpusModelName || undefined,
+        extraConfig: customExtraConfig || undefined,
+      };
+
+      if (builtinTemplateId) {
+        // 内置服务商模板：以官方预设身份保存，复用内置 provider 的应用逻辑。
+        await invoke("save_agent_builtin_provider", {
+          request: {
+            tool: "claude",
+            providerId: builtinTemplateId,
+            baseUrl: customBaseUrl || undefined,
+            ...fields,
+          },
+        });
+      } else {
+        await invoke("save_agent_custom_provider", {
+          request: {
+            tool: "claude",
+            providerId: editingCustomId ? `custom:${editingCustomId}` : undefined,
+            name: customName,
+            baseUrl: customBaseUrl,
+            quotaProviderType: customQuotaProviderType || undefined,
+            quotaAccessToken: customQuotaAccessToken || undefined,
+            quotaUserId: customQuotaUserId || undefined,
+            ...fields,
+          },
+        });
+      }
 
       // 编辑保存后若该 provider 正是当前生效的，重新 apply 让改动立即生效；
       // 否则只更新预设库，不动当前生效配置。
-      const selector = editingCustomId ? `custom:${editingCustomId}` : undefined;
+      const selector = editingCustomId
+        ? `custom:${editingCustomId}`
+        : builtinTemplateId || undefined;
       const isActive = selector && config?.activeProvider === selector;
       if (isActive) {
         await invoke("apply_agent_provider_config", {
@@ -1215,6 +1259,7 @@ function ClaudeConfig({
       setCustomQuotaAccessToken("");
       setCustomQuotaUserId("");
       setEditingCustomId(null);
+      setBuiltinTemplateId(null);
       setShowCustomForm(false);
       await onRefresh();
     } catch (e) {
@@ -1238,6 +1283,7 @@ function ClaudeConfig({
       cleanPreviewApiKey(extractClaudeConfigApiKey(config.extraConfig || ""), CLAUDE_TOKEN_PLACEHOLDER);
 
     setEditingCustomId(null);
+    setBuiltinTemplateId(null);
     setCustomName(activeProvider === "official" ? "" : sourceName);
     setCustomBaseUrl(config.baseUrl || "");
     setCustomApiKey(nextApiKey);
@@ -1271,6 +1317,7 @@ function ClaudeConfig({
   // 编辑自定义服务商
   const handleEditCustom = (provider: AgentCustomProviderSummary) => {
     setEditingCustomId(provider.id);
+    setBuiltinTemplateId(null);
     setCustomName(provider.name);
     setCustomBaseUrl(provider.baseUrl);
     setCustomApiKey(provider.apiKey || "");
@@ -1380,21 +1427,35 @@ function ClaudeConfig({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {CLAUDE_BUILTIN_PROVIDERS.map((p) => (
+              {CLAUDE_BUILTIN_PROVIDERS.filter((p) => {
+                // 官方走 OAuth，作为默认基线始终保留；其余内置服务商仅展示已配置好 key 的，
+                // 但当前生效的 provider 即使尚未配置也保留，避免选中态丢失。
+                if (p.id === "official" || p.id === provider) return true;
+                return config?.builtInProviders.some(
+                  (saved) => saved.id === p.id && saved.tokenConfigured,
+                );
+              }).map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.name}
                 </SelectItem>
               ))}
-              {config?.customProviders && config.customProviders.length > 0 && (
-                <>
-                  <Separator className="my-1" />
-                  {config.customProviders.map((p) => (
-                    <SelectItem key={`custom:${p.id}`} value={`custom:${p.id}`}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </>
-              )}
+              {(() => {
+                const customProviders = config?.customProviders ?? [];
+                const visible = customProviders.filter(
+                  (p) => p.tokenConfigured || `custom:${p.id}` === provider,
+                );
+                if (visible.length === 0) return null;
+                return (
+                  <>
+                    <Separator className="my-1" />
+                    {visible.map((p) => (
+                      <SelectItem key={`custom:${p.id}`} value={`custom:${p.id}`}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </>
+                );
+              })()}
             </SelectContent>
           </Select>
           <Button
@@ -1402,6 +1463,7 @@ function ClaudeConfig({
             size="sm"
             onClick={() => {
               setEditingCustomId(null);
+              setBuiltinTemplateId(null);
               setCustomName("");
               setCustomBaseUrl("");
               setCustomApiKey("");
@@ -1429,14 +1491,56 @@ function ClaudeConfig({
         <div className="rounded-lg border border-border/60 bg-card/60 p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="text-[11px] font-medium">
-              {editingCustomId ? "编辑服务商" : "添加自定义服务商"}
+              {editingCustomId
+                ? "编辑服务商"
+                : builtinTemplateId
+                  ? `配置内置服务商：${CLAUDE_BUILTIN_PROVIDERS.find((p) => p.id === builtinTemplateId)?.name || ""}`
+                  : "添加自定义服务商"}
             </div>
-            {!editingCustomId && (
+            {!editingCustomId && !builtinTemplateId && (
               <Button variant="outline" size="sm" onClick={handleLoadCurrentToCustom} disabled={!config}>
                 获取当前
               </Button>
             )}
+            {builtinTemplateId && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[10px]"
+                onClick={() => {
+                  setBuiltinTemplateId(null);
+                  setCustomName("");
+                  setCustomBaseUrl("");
+                  setCustomApiKey("");
+                }}
+              >
+                切换为自定义
+              </Button>
+            )}
           </div>
+
+          {/* 内置服务商模板：仅新建且未选定模板时展示，点击一键回显名称与 baseUrl。 */}
+          {!editingCustomId && !builtinTemplateId && (
+            <div className="mb-3 flex flex-col gap-2">
+              <Label className="text-[10px] text-muted-foreground">
+                选择内置服务商快速配置（填入 KEY 与模型后保存为官方预设）
+              </Label>
+              <div className="flex flex-wrap gap-1.5">
+                {CLAUDE_BUILTIN_PROVIDERS.filter((p) => p.id !== "official").map((p) => (
+                  <Button
+                    key={p.id}
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[10px]"
+                    onClick={() => handleSelectBuiltinTemplate(p)}
+                  >
+                    {p.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-2">
               <Label className="text-[10px]">名称</Label>
@@ -1445,6 +1549,7 @@ function ClaudeConfig({
                 onChange={(e) => setCustomName(e.target.value)}
                 placeholder="我的服务商"
                 className="text-[10px]"
+                disabled={!!builtinTemplateId}
               />
             </div>
             <div className="flex flex-col gap-2">
@@ -1455,6 +1560,7 @@ function ClaudeConfig({
                   onChange={(e) => setCustomBaseUrl(e.target.value)}
                   placeholder="https://api.example.com"
                   className="text-[10px]"
+                  disabled={!!builtinTemplateId}
                 />
                 <Button
                   variant="outline"
@@ -1469,8 +1575,7 @@ function ClaudeConfig({
             </div>
             <div className="flex flex-col gap-2">
               <Label className="text-[10px]">API 密钥</Label>
-              <Input
-                type="password"
+              <ApiKeyInput
                 value={customApiKey}
                 onChange={(e) => setCustomApiKey(e.target.value)}
                 placeholder="sk-ant-..."
@@ -1523,35 +1628,36 @@ function ClaudeConfig({
                 className="min-h-32 resize-y font-mono text-[10px]"
               />
             </div>
-            <div className="flex flex-col gap-2">
-              <Label className="text-[10px]">额度查询</Label>
-              <Select
-                value={customQuotaProviderType || "none"}
-                onValueChange={(value) => {
-                  const next = value === "none" ? "" : quotaProviderType(value);
-                  setCustomQuotaProviderType(next);
-                  if (next !== "newapi") {
-                    setCustomQuotaAccessToken("");
-                    setCustomQuotaUserId("");
-                  }
-                }}
-              >
-                <SelectTrigger className="w-full text-[10px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">不查询</SelectItem>
-                  <SelectItem value="sub2api">Sub2API</SelectItem>
-                  <SelectItem value="newapi">New API</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {customQuotaProviderType === "newapi" && (
+            {!builtinTemplateId && (
+              <div className="flex flex-col gap-2">
+                <Label className="text-[10px]">额度查询</Label>
+                <Select
+                  value={customQuotaProviderType || "none"}
+                  onValueChange={(value) => {
+                    const next = value === "none" ? "" : quotaProviderType(value);
+                    setCustomQuotaProviderType(next);
+                    if (next !== "newapi") {
+                      setCustomQuotaAccessToken("");
+                      setCustomQuotaUserId("");
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-full text-[10px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">不查询</SelectItem>
+                    <SelectItem value="sub2api">Sub2API</SelectItem>
+                    <SelectItem value="newapi">New API</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {customQuotaProviderType === "newapi" && !builtinTemplateId && (
               <>
                 <div className="flex flex-col gap-2">
                   <Label className="text-[10px]">访问令牌</Label>
-                  <Input
-                    type="password"
+                  <ApiKeyInput
                     value={customQuotaAccessToken}
                     onChange={(e) => setCustomQuotaAccessToken(e.target.value)}
                     placeholder="Bearer Token"
@@ -1675,8 +1781,7 @@ function ClaudeConfig({
           {/* API Key */}
           <div className="flex flex-col gap-2">
             <Label className="text-[11px]">API 密钥</Label>
-            <Input
-              type="password"
+            <ApiKeyInput
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={config?.tokenConfigured ? "已配置（留空保持不变）" : "sk-ant-..."}
@@ -1859,9 +1964,14 @@ function CodexConfig({
   const [customSaving, setCustomSaving] = useState(false);
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
 
+  // 防止保存后 config 变化把主表单字段重置回 activeProvider，覆盖用户的编辑/选择。
+  const initializedRef = useRef(false);
+
   // 回显配置
   useEffect(() => {
     if (config) {
+      if (initializedRef.current) return;
+      initializedRef.current = true;
       setProvider(config.activeProvider || "official");
       setBaseUrl(config.baseUrl || "");
       setApiKey(config.apiKey || "");
@@ -2246,8 +2356,7 @@ function CodexConfig({
             </div>
             <div className="flex flex-col gap-2">
               <Label className="text-[10px]">API 密钥</Label>
-              <Input
-                type="password"
+              <ApiKeyInput
                 value={customApiKey}
                 onChange={(e) => setCustomApiKey(e.target.value)}
                 placeholder="sk-..."
@@ -2301,8 +2410,7 @@ function CodexConfig({
               <>
                 <div className="flex flex-col gap-2">
                   <Label className="text-[10px]">访问令牌</Label>
-                  <Input
-                    type="password"
+                  <ApiKeyInput
                     value={customQuotaAccessToken}
                     onChange={(e) => setCustomQuotaAccessToken(e.target.value)}
                     placeholder="Bearer Token"
@@ -2398,8 +2506,7 @@ function CodexConfig({
           {/* API Key */}
           <div className="flex flex-col gap-2">
             <Label className="text-[11px]">API 密钥</Label>
-            <Input
-              type="password"
+            <ApiKeyInput
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={config?.tokenConfigured ? "已配置（留空保持不变）" : "sk-..."}
