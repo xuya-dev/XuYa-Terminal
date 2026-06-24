@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-06-24
+
+### ✨ 编码配置密钥与服务商优化 (Agent Config Key & Provider Improvements)
+- 密钥框新增眼睛图标，点击切换明文 / 掩码查看。
+- Claude 服务商下拉仅展示已配置 Key 的服务商，未配置的内置服务商移至添加表单。
+- 添加服务商表单新增内置服务商模板快捷按钮，点击一键回显名称与 BaseURL，仅需填 Key 与模型即可保存为内置服务商。
+
+### 🐛 Codex 密钥修改修复 (Codex Key Edit Fix)
+- 修复 Codex 保存刷新后密钥被重置回旧值、导致无法修改的问题。
+
+### 🐛 终端快捷键放行修复 (Terminal Shortcut Deferral)
+- 终端聚焦时将 Ctrl+T/D/E/G/U/F/I 及 Ctrl+Tab 等交给终端 / shell / CLI，不再被全局快捷键抢走。
+- 保持 Ctrl+W、缩放、命令面板、侧边栏等全局行为不变。
+
 ## [1.0.6] - 2026-06-14
 
 ### ✨ 编码配置完善 (Agent Config Improvements)
