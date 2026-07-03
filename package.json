@@ -42,7 +42,7 @@
     "knip": "knip"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.81",
+    "@ai-sdk/anthropic": "^4.0.2",
     "@ai-sdk/cerebras": "^2.0.54",
     "@ai-sdk/google": "^3.0.80",
     "@ai-sdk/groq": "^3.0.39",
